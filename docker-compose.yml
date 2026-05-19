@@ -10,10 +10,8 @@ services:
       --one-node
       --mode dev-container
       --smp 1
-      --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:19092
-      --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:19092
-    ports:
-      - "19092:19092"
+      --kafka-addr PLAINTEXT://0.0.0.0:29092
+      --advertise-kafka-addr PLAINTEXT://redpanda:29092
     healthcheck:
       test: ["CMD", "rpk", "cluster", "info"]
       interval: 5s
