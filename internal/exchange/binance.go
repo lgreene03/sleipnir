@@ -29,7 +29,6 @@ type BinanceConnector struct {
 	logger     *slog.Logger
 
 	mu        sync.Mutex
-	listenKey string
 }
 
 // NewBinanceConnector creates a new BinanceConnector.
@@ -229,103 +228,11 @@ func (bc *BinanceConnector) GetOrderState(ctx context.Context, orderID string, i
 	return mapBinanceStatus(binanceResp.Status), nil
 }
 
-// createUserDataStream requests a new listenKey.
-func (bc *BinanceConnector) createUserDataStream(ctx context.Context) (string, error) {
-	fullURL := fmt.Sprintf("%s/api/v3/userDataStream", bc.restURL)
-	req, err := http.NewRequest(http.MethodPost, fullURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("X-MBX-APIKEY", bc.apiKey)
-	req = req.WithContext(ctx)
-
-	resp, err := bc.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to create user data stream: %s", string(bodyBytes))
-	}
-
-	var streamResp struct {
-		ListenKey string `json:"listenKey"`
-	}
-	if err := json.Unmarshal(bodyBytes, &streamResp); err != nil {
-		return "", err
-	}
-
-	return streamResp.ListenKey, nil
-}
-
-// keepAliveUserDataStream pings the listenKey to keep it alive.
-func (bc *BinanceConnector) keepAliveUserDataStream(ctx context.Context, listenKey string) error {
-	fullURL := fmt.Sprintf("%s/api/v3/userDataStream?listenKey=%s", bc.restURL, url.QueryEscape(listenKey))
-	req, err := http.NewRequest(http.MethodPut, fullURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-MBX-APIKEY", bc.apiKey)
-	req = req.WithContext(ctx)
-
-	resp, err := bc.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to keep alive user data stream: %s", string(bodyBytes))
-	}
-
-	return nil
-}
-
 // StartUserStream opens the WebSocket feed and publishes live fills back to the channel.
 func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<- ExecutionFill) error {
-	bc.logger.Info("Starting Binance User Data WebSocket stream...")
+	bc.logger.Info("Starting Binance User Data WebSocket stream via WebSocket API...")
 
-	// 1. Create User Data Stream and obtain listenKey
-	listenKey, err := bc.createUserDataStream(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize user data stream listenKey: %w", err)
-	}
-
-	bc.mu.Lock()
-	bc.listenKey = listenKey
-	bc.mu.Unlock()
-
-	bc.logger.Info("Successfully acquired Binance listenKey", "listenKey", listenKey)
-
-	// 2. Start keep-alive loop (pings every 20 minutes to be safe)
-	go func() {
-		ticker := time.NewTicker(20 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				bc.logger.Info("Shutting down user data stream keepalive worker")
-				return
-			case <-ticker.C:
-				bc.mu.Lock()
-				lk := bc.listenKey
-				bc.mu.Unlock()
-
-				if lk != "" {
-					bc.logger.Debug("Pinging Binance user data stream keep-alive", "listenKey", lk)
-					if err := bc.keepAliveUserDataStream(ctx, lk); err != nil {
-						bc.logger.Error("Failed to keep-alive user data stream", "error", err)
-					}
-				}
-			}
-		}
-	}()
-
-	// 3. Connect and start reader loop with automatic recovery
+	// Connect and start reader loop with automatic recovery
 	go func() {
 		for {
 			select {
@@ -334,26 +241,40 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			default:
 			}
 
-			bc.mu.Lock()
-			lk := bc.listenKey
-			bc.mu.Unlock()
+			bc.logger.Info("Connecting to Binance WS API address", "url", bc.wsURL)
 
-			if lk == "" {
-				time.Sleep(2 * time.Second)
-				continue
-			}
-
-			wsAddress := fmt.Sprintf("%s/%s", bc.wsURL, lk)
-			bc.logger.Info("Connecting to Binance WS address", "url", wsAddress)
-
-			conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsAddress, nil)
+			conn, _, err := websocket.DefaultDialer.DialContext(ctx, bc.wsURL, nil)
 			if err != nil {
-				bc.logger.Error("Failed to dial Binance websocket, retrying in 5 seconds", "error", err)
+				bc.logger.Error("Failed to dial Binance WS API, retrying in 5 seconds", "error", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			bc.logger.Info("Binance User Data WS connected!")
+			bc.logger.Info("Binance User Data WS connected! Subscribing to user stream...")
+
+			// Construct the signed subscription request
+			timestamp := time.Now().UnixMilli()
+			queryString := fmt.Sprintf("apiKey=%s&timestamp=%d", bc.apiKey, timestamp)
+			signature := bc.sign(queryString)
+
+			subscribeReq := map[string]interface{}{
+				"id":     "sleipnir-sub-1",
+				"method": "userDataStream.subscribe.signature",
+				"params": map[string]interface{}{
+					"apiKey":    bc.apiKey,
+					"timestamp": timestamp,
+					"signature": signature,
+				},
+			}
+
+			if err := conn.WriteJSON(subscribeReq); err != nil {
+				bc.logger.Error("Failed to write subscription request, retrying in 5 seconds", "error", err)
+				conn.Close()
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			bc.logger.Info("Sent userDataStream.subscribe.signature request successfully.")
 
 			// Message reading loop
 			for {
@@ -368,6 +289,17 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 				var payload map[string]interface{}
 				if err := json.Unmarshal(msg, &payload); err != nil {
 					bc.logger.Error("Failed to parse websocket message", "error", err)
+					continue
+				}
+
+				// Check if this is a response to our subscribe request or other requests
+				if id, exists := payload["id"]; exists {
+					bc.logger.Debug("Received WS-API response", "id", id, "raw", string(msg))
+					if errMsg, ok := payload["error"].(map[string]interface{}); ok {
+						bc.logger.Error("WS-API returned subscription error", "error", errMsg)
+					} else {
+						bc.logger.Info("WS-API successfully subscribed to user data stream!")
+					}
 					continue
 				}
 

@@ -16,7 +16,7 @@ type Config struct {
 	BinanceAPIKey    string `envconfig:"BINANCE_API_KEY"`
 	BinanceAPISecret string `envconfig:"BINANCE_API_SECRET"`
 	BinanceRESTURL   string `envconfig:"BINANCE_REST_URL" default:"https://testnet.binance.vision"`
-	BinanceWSURL     string `envconfig:"BINANCE_WS_URL" default:"wss://testnet.binance.vision/ws"`
+	BinanceWSURL     string `envconfig:"BINANCE_WS_URL" default:"wss://ws-api.testnet.binance.vision/ws-api/v3"`
 
 	RateLimitRPS float64 `envconfig:"RATE_LIMIT_RPS" default:"10.0"`
 	Port         string  `envconfig:"PORT" default:"8080"`

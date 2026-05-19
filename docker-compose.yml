@@ -36,7 +36,7 @@ services:
       - BINANCE_API_KEY=${BINANCE_API_KEY}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET}
       - BINANCE_REST_URL=https://testnet.binance.vision
-      - BINANCE_WS_URL=wss://testnet.binance.vision/ws
+      - BINANCE_WS_URL=wss://ws-api.testnet.binance.vision/ws-api/v3
       - RATE_LIMIT_RPS=10.0
       - PORT=8080
     restart: on-failure
