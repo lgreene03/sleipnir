@@ -7,7 +7,6 @@ services:
     container_name: sleipnir-redpanda
     command: >
       redpanda start
-      --one-node
       --mode dev-container
       --smp 1
       --kafka-addr PLAINTEXT://0.0.0.0:29092
