@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sleipnir/internal/exchange"
+	"sleipnir/internal/telemetry"
 )
 
 // OrderTracker is an active, thread-safe memory manager for tracking pending/submitted orders.
@@ -13,6 +14,7 @@ type OrderTracker struct {
 	mu     sync.RWMutex
 	orders map[string]exchange.Order
 	states map[string]exchange.OrderState
+	store  OrderStore
 }
 
 // NewOrderTracker creates a new instance of OrderTracker.
@@ -23,25 +25,67 @@ func NewOrderTracker() *OrderTracker {
 	}
 }
 
+// WithStore registers a persistent store and preloads any active orders on boot.
+func (ot *OrderTracker) WithStore(store OrderStore) *OrderTracker {
+	ot.store = store
+	orders, states, _, err := store.GetActiveOrders(context.Background())
+	if err == nil {
+		ot.mu.Lock()
+		for _, o := range orders {
+			ot.orders[o.OrderID] = o
+			ot.states[o.OrderID] = states[o.OrderID]
+		}
+		ot.mu.Unlock()
+	}
+	return ot
+}
+
 // AddOrder registers a new order and sets its initial state.
 func (ot *OrderTracker) AddOrder(order exchange.Order, state exchange.OrderState) {
 	ot.mu.Lock()
-	defer ot.mu.Unlock()
 	ot.orders[order.OrderID] = order
 	ot.states[order.OrderID] = state
+	ot.mu.Unlock()
+
+	if ot.store != nil {
+		_ = ot.store.SaveOrder(context.Background(), order, state)
+	}
 }
 
 // UpdateOrderState updates the status of an existing order. Returns true if the state changed.
 func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderState) bool {
 	ot.mu.Lock()
-	defer ot.mu.Unlock()
-
 	oldState, exists := ot.states[orderID]
 	if !exists || oldState != state {
 		ot.states[orderID] = state
+		ot.mu.Unlock()
+
+		if ot.store != nil {
+			filledQty := 0.0
+			if state == exchange.StateFilled {
+				if o, exists := ot.orders[orderID]; exists {
+					filledQty = o.Quantity
+				}
+			}
+			_ = ot.store.UpdateOrderState(context.Background(), orderID, state, filledQty)
+		}
 		return true
 	}
+	ot.mu.Unlock()
 	return false
+}
+
+// UpdateOrderStateAndQty updates both the state and filled quantity.
+func (ot *OrderTracker) UpdateOrderStateAndQty(orderID string, state exchange.OrderState, filledQty float64) bool {
+	ot.mu.Lock()
+	oldState, exists := ot.states[orderID]
+	ot.states[orderID] = state
+	ot.mu.Unlock()
+
+	if ot.store != nil {
+		_ = ot.store.UpdateOrderState(context.Background(), orderID, state, filledQty)
+	}
+	return !exists || oldState != state
 }
 
 // GetOrder retrieves an order by its ID.
@@ -96,6 +140,14 @@ func NewTokenBucketLimiter(rps float64) *TokenBucketLimiter {
 
 // Wait blocks until a token is available or the context is canceled.
 func (tbl *TokenBucketLimiter) Wait(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		delay := time.Since(start).Seconds()
+		if delay > 0 {
+			telemetry.RateLimitDelay.Add(delay)
+		}
+	}()
+
 	for {
 		tbl.mu.Lock()
 		now := time.Now()

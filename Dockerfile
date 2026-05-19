@@ -13,8 +13,10 @@ RUN go mod download
 # Copy the rest of the codebase
 COPY . .
 
-# Compile a static binary (disable CGO, strip symbols with ldflags)
+# Compile static binaries (disable CGO, strip symbols with ldflags)
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o sleipnir ./cmd/sleipnir
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_huginn ./cmd/mock_huginn
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_muninn ./cmd/mock_muninn
 
 # Stage 2: Final runner environment
 FROM alpine:3.20
@@ -24,11 +26,13 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
-# Copy executable from compiler environment
+# Copy executables from compiler environment
 COPY --from=builder /app/sleipnir .
+COPY --from=builder /app/mock_huginn .
+COPY --from=builder /app/mock_muninn .
 
 # Expose HTTP health server port
 EXPOSE 8080
 
-# Run the gateway binary
+# By default, run the gateway binary
 ENTRYPOINT ["./sleipnir"]

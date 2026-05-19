@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"sleipnir/internal/telemetry"
 )
 
 // BinanceConnector implements the ExchangeConnector interface for Binance Spot.
@@ -99,6 +100,16 @@ func (bc *BinanceConnector) newSignedRequest(method, path string, params url.Val
 func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (ExecutionFill, error) {
 	bc.logger.Info("Submitting order to Binance", "orderID", order.OrderID, "instrument", order.Instrument, "qty", order.Quantity, "side", order.Side)
 
+	start := time.Now()
+	var finalErr error
+	defer func() {
+		statusLabel := "success"
+		if finalErr != nil {
+			statusLabel = "error"
+		}
+		telemetry.OrderLatency.WithLabelValues("submit", order.Instrument, statusLabel).Observe(time.Since(start).Seconds())
+	}()
+
 	params := url.Values{}
 	params.Set("symbol", TranslateToExchange(order.Instrument))
 	params.Set("side", string(order.Side))
@@ -113,18 +124,21 @@ func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (Execu
 
 	req, err := bc.newSignedRequest(http.MethodPost, "/api/v3/order", params)
 	if err != nil {
+		finalErr = err
 		return ExecutionFill{}, fmt.Errorf("failed to build order request: %w", err)
 	}
 	req = req.WithContext(ctx)
 
 	resp, err := bc.httpClient.Do(req)
 	if err != nil {
+		finalErr = err
 		return ExecutionFill{}, fmt.Errorf("failed to send order request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		finalErr = fmt.Errorf("exchange returned non-ok status %d", resp.StatusCode)
 		return ExecutionFill{}, fmt.Errorf("exchange returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -141,6 +155,7 @@ func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (Execu
 	}
 
 	if err := json.Unmarshal(bodyBytes, &binanceResp); err != nil {
+		finalErr = err
 		return ExecutionFill{}, fmt.Errorf("failed to parse order response: %w", err)
 	}
 
@@ -169,24 +184,37 @@ func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (Execu
 func (bc *BinanceConnector) CancelOrder(ctx context.Context, orderID string, instrument string) error {
 	bc.logger.Info("Cancelling order on Binance", "orderID", orderID, "instrument", instrument)
 
+	start := time.Now()
+	var finalErr error
+	defer func() {
+		statusLabel := "success"
+		if finalErr != nil {
+			statusLabel = "error"
+		}
+		telemetry.OrderLatency.WithLabelValues("cancel", instrument, statusLabel).Observe(time.Since(start).Seconds())
+	}()
+
 	params := url.Values{}
 	params.Set("symbol", TranslateToExchange(instrument))
 	params.Set("origClientOrderId", orderID)
 
 	req, err := bc.newSignedRequest(http.MethodDelete, "/api/v3/order", params)
 	if err != nil {
+		finalErr = err
 		return fmt.Errorf("failed to build cancel request: %w", err)
 	}
 	req = req.WithContext(ctx)
 
 	resp, err := bc.httpClient.Do(req)
 	if err != nil {
+		finalErr = err
 		return fmt.Errorf("failed to send cancel request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		finalErr = fmt.Errorf("cancel returned non-ok status %d", resp.StatusCode)
 		return fmt.Errorf("cancel returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -194,8 +222,18 @@ func (bc *BinanceConnector) CancelOrder(ctx context.Context, orderID string, ins
 }
 
 // GetOrderState queries the live status of an order on Binance.
-func (bc *BinanceConnector) GetOrderState(ctx context.Context, orderID string, instrument string) (OrderState, error) {
+func (bc *BinanceConnector) GetOrderState(ctx context.Context, orderID string, instrument string) (OrderState, float64, float64, error) {
 	bc.logger.Debug("Querying order state on Binance", "orderID", orderID, "instrument", instrument)
+
+	start := time.Now()
+	var finalErr error
+	defer func() {
+		statusLabel := "success"
+		if finalErr != nil {
+			statusLabel = "error"
+		}
+		telemetry.OrderLatency.WithLabelValues("get_state", instrument, statusLabel).Observe(time.Since(start).Seconds())
+	}()
 
 	params := url.Values{}
 	params.Set("symbol", TranslateToExchange(instrument))
@@ -203,29 +241,45 @@ func (bc *BinanceConnector) GetOrderState(ctx context.Context, orderID string, i
 
 	req, err := bc.newSignedRequest(http.MethodGet, "/api/v3/order", params)
 	if err != nil {
-		return StatePending, fmt.Errorf("failed to build get-order request: %w", err)
+		finalErr = err
+		return StatePending, 0, 0, fmt.Errorf("failed to build get-order request: %w", err)
 	}
 	req = req.WithContext(ctx)
 
 	resp, err := bc.httpClient.Do(req)
 	if err != nil {
-		return StatePending, fmt.Errorf("failed to send get-order request: %w", err)
+		finalErr = err
+		return StatePending, 0, 0, fmt.Errorf("failed to send get-order request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return StatePending, fmt.Errorf("get order state returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
+		finalErr = fmt.Errorf("get order state returned non-ok status %d", resp.StatusCode)
+		return StatePending, 0, 0, fmt.Errorf("get order state returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var binanceResp struct {
-		Status string `json:"status"`
+		Status              string `json:"status"`
+		ExecutedQty         string `json:"executedQty"`
+		CummulativeQuoteQty string `json:"cummulativeQuoteQty"`
+		Price               string `json:"price"`
 	}
 	if err := json.Unmarshal(bodyBytes, &binanceResp); err != nil {
-		return StatePending, fmt.Errorf("failed to parse status payload: %w", err)
+		finalErr = err
+		return StatePending, 0, 0, fmt.Errorf("failed to parse status payload: %w", err)
 	}
 
-	return mapBinanceStatus(binanceResp.Status), nil
+	executedQty, _ := strconv.ParseFloat(binanceResp.ExecutedQty, 64)
+	cummulativeQuoteQty, _ := strconv.ParseFloat(binanceResp.CummulativeQuoteQty, 64)
+	fillPrice := 0.0
+	if executedQty > 0 {
+		fillPrice = cummulativeQuoteQty / executedQty
+	} else {
+		fillPrice, _ = strconv.ParseFloat(binanceResp.Price, 64)
+	}
+
+	return mapBinanceStatus(binanceResp.Status), executedQty, fillPrice, nil
 }
 
 // StartUserStream opens the WebSocket feed and publishes live fills back to the channel.

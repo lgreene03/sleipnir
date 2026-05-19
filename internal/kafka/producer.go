@@ -9,6 +9,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"sleipnir/internal/exchange"
+	"sleipnir/internal/telemetry"
 )
 
 // Producer wraps a segmentio kafka.Writer to publish fills back to the tracking layer.
@@ -51,9 +52,11 @@ func (p *Producer) PublishFill(ctx context.Context, fill exchange.ExecutionFill)
 		Time:  fill.Timestamp,
 	})
 	if err != nil {
+		telemetry.KafkaMessagesProcessed.WithLabelValues(p.writer.Topic, "produce", "error").Inc()
 		return fmt.Errorf("failed to write message to Kafka: %w", err)
 	}
 
+	telemetry.KafkaMessagesProcessed.WithLabelValues(p.writer.Topic, "produce", "success").Inc()
 	return nil
 }
 

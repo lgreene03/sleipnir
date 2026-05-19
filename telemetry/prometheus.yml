@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  - job_name: 'sleipnir'
+    static_configs:
+      - targets: ['sleipnir-gateway:8080']

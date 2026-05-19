@@ -15,6 +15,8 @@ import (
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/gateway"
 	"sleipnir/internal/kafka"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -48,7 +50,22 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// 4. Initialize components (Dependency Injection)
-	tracker := gateway.NewOrderTracker()
+	// Database path volume-mounted or default
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "/app/data/sleipnir.db"
+	}
+	
+	logger.Info("Initializing persistent SQLite database...", "path", dbPath)
+	store, err := gateway.NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		logger.Error("Failed to initialize SQLite order store", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// Initialize the tracker and preload non-terminal active orders
+	tracker := gateway.NewOrderTracker().WithStore(store)
 	limiter := gateway.NewTokenBucketLimiter(cfg.RateLimitRPS)
 	
 	connector := exchange.NewBinanceConnector(
@@ -72,6 +89,63 @@ func main() {
 		logger,
 	)
 
+	// 5. Active Boot-Time Reconciliation Loop
+	logger.Info("Performing boot-time order reconciliation against live exchange status...")
+	reconcileCtx, reconcileCancel := context.WithTimeout(ctx, 30*time.Second)
+	
+	activeOrders, activeStates, filledQtys, err := store.GetActiveOrders(reconcileCtx)
+	if err != nil {
+		logger.Error("Failed to query active orders for reconciliation", "error", err)
+	} else {
+		logger.Info("Found outstanding active orders in local store to reconcile", "count", len(activeOrders))
+		for _, order := range activeOrders {
+			logger.Info("Querying live status for order", "orderID", order.OrderID, "instrument", order.Instrument)
+			
+			exchState, exchFilledQty, exchPrice, err := connector.GetOrderState(reconcileCtx, order.OrderID, order.Instrument)
+			if err != nil {
+				logger.Error("Failed to query order state on exchange during boot reconciliation", "orderID", order.OrderID, "error", err)
+				continue
+			}
+
+			prevFilledQty := filledQtys[order.OrderID]
+			deltaQty := exchFilledQty - prevFilledQty
+			
+			logger.Info("Reconciliation details", 
+				"orderID", order.OrderID, 
+				"local_state", activeStates[order.OrderID], 
+				"exchange_state", exchState, 
+				"prev_filled_qty", prevFilledQty, 
+				"exchange_filled_qty", exchFilledQty,
+				"delta_qty", deltaQty,
+			)
+
+			if deltaQty > 0 {
+				logger.Info("Detected missed fills. Backfilling fill message to Kafka...", "orderID", order.OrderID, "qty", deltaQty)
+				
+				fill := exchange.ExecutionFill{
+					OrderID:         order.OrderID,
+					Instrument:      order.Instrument,
+					Side:            order.Side,
+					Quantity:        deltaQty,
+					FillPrice:       exchPrice,
+					TransactionCost: 0.0,
+					Timestamp:       time.Now(),
+				}
+
+				if err := producer.PublishFill(reconcileCtx, fill); err != nil {
+					logger.Error("Failed to publish backfilled execution fill to Kafka", "orderID", order.OrderID, "error", err)
+				} else {
+					logger.Info("Successfully backfilled execution fill to Kafka", "orderID", order.OrderID)
+				}
+			}
+
+			// Synchronize status in tracking memory & persistent DB
+			tracker.UpdateOrderStateAndQty(order.OrderID, exchState, exchFilledQty)
+		}
+		logger.Info("Active boot-time reconciliation completed successfully.")
+	}
+	reconcileCancel()
+
 	gw := gateway.NewGateway(
 		consumer,
 		producer,
@@ -81,20 +155,20 @@ func main() {
 		logger,
 	)
 
-	// 5. Spin up a production-grade health check probe HTTP server
+	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: healthHandler(tracker),
 	}
 
 	go func() {
-		logger.Info("Starting health-check server", "port", cfg.Port)
+		logger.Info("Starting HTTP API (health-check & telemetry) server", "port", cfg.Port)
 		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("Health-check server encountered an error", "error", err)
+			logger.Error("HTTP API server encountered an error", "error", err)
 		}
 	}()
 
-	// 6. Handle signals and coordinate graceful teardown
+	// 7. Handle signals and coordinate graceful teardown
 	go func() {
 		sig := <-sigChan
 		logger.Info("System signal captured, triggering shutdown sequence...", "signal", sig.String())
@@ -118,7 +192,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// 7. Run the Gateway Loop
+	// 8. Run the Gateway Loop
 	if err := gw.Start(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("Gateway loops terminated via context completion.")
@@ -129,7 +203,7 @@ func main() {
 	}
 }
 
-// healthHandler serves liveness probes and active trading telemetry.
+// healthHandler serves liveness probes, active trading telemetry, and Prometheus /metrics.
 func healthHandler(tracker *gateway.OrderTracker) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -143,5 +217,6 @@ func healthHandler(tracker *gateway.OrderTracker) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d}`, len(activeOrders))
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 	return mux
 }

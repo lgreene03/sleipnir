@@ -39,4 +39,67 @@ services:
       - BINANCE_WS_URL=wss://ws-api.testnet.binance.vision/ws-api/v3
       - RATE_LIMIT_RPS=10.0
       - PORT=8080
+      - DB_PATH=/app/data/sleipnir.db
+    volumes:
+      - sleipnir-data:/app/data
     restart: on-failure
+
+  # Mock Huginn - Strategy Engine (dispatches intents)
+  mock-huginn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mock-huginn
+    entrypoint: ["./mock_huginn"]
+    depends_on:
+      sleipnir:
+        condition: service_started
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - KAFKA_INTENTS_TOPIC=executions.intents.v1
+    restart: on-failure
+
+  # Mock Muninn - Portfolio Tracking (ingests fills)
+  mock-muninn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mock-muninn
+    entrypoint: ["./mock_muninn"]
+    depends_on:
+      sleipnir:
+        condition: service_started
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - KAFKA_FILLS_TOPIC=executions.fills.v1
+      - KAFKA_CONSUMER_GROUP=mock-muninn-tracker
+    restart: on-failure
+
+  # Prometheus Telemetry Collector
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: sleipnir-prometheus
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./telemetry/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - sleipnir
+
+  # Grafana Visualization Dashboards
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: sleipnir-grafana
+    ports:
+      - "3005:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./telemetry/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./telemetry/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  sleipnir-data:

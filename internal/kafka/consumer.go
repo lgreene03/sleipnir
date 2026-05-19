@@ -9,12 +9,14 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"sleipnir/internal/exchange"
+	"sleipnir/internal/telemetry"
 )
 
 // Consumer wraps a segmentio kafka.Reader to consume execution intents.
 type Consumer struct {
 	reader *kafka.Reader
 	logger *slog.Logger
+	topic  string
 }
 
 // NewConsumer creates a new Kafka consumer wrapper.
@@ -33,6 +35,7 @@ func NewConsumer(brokers []string, topic, groupID string, logger *slog.Logger) *
 	return &Consumer{
 		reader: r,
 		logger: logger.With("module", "kafka_consumer", "topic", topic),
+		topic:  topic,
 	}
 }
 
@@ -40,15 +43,20 @@ func NewConsumer(brokers []string, topic, groupID string, logger *slog.Logger) *
 func (c *Consumer) FetchIntent(ctx context.Context) (exchange.Order, kafka.Message, error) {
 	msg, err := c.reader.FetchMessage(ctx)
 	if err != nil {
+		if ctx.Err() == nil {
+			telemetry.KafkaMessagesProcessed.WithLabelValues(c.topic, "consume", "error").Inc()
+		}
 		return exchange.Order{}, kafka.Message{}, err
 	}
 
 	var intent exchange.Order
 	if err := json.Unmarshal(msg.Value, &intent); err != nil {
+		telemetry.KafkaMessagesProcessed.WithLabelValues(c.topic, "consume", "error").Inc()
 		c.logger.Error("Failed to deserialize execution intent payload", "error", err, "offset", msg.Offset)
 		return exchange.Order{}, msg, fmt.Errorf("failed to deserialize intent: %w", err)
 	}
 
+	telemetry.KafkaMessagesProcessed.WithLabelValues(c.topic, "consume", "success").Inc()
 	return intent, msg, nil
 }
 

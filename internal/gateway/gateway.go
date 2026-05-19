@@ -10,6 +10,7 @@ import (
 
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/kafka"
+	"sleipnir/internal/telemetry"
 )
 
 // Gateway coordinates the order ingestion, submission, tracking, and fills broadcast loops.
@@ -73,6 +74,9 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				}
 				gw.logger.Info("Gateway received real-time fill", "orderID", fill.OrderID, "instrument", fill.Instrument, "qty", fill.Quantity, "price", fill.FillPrice)
 
+				// Track filled orders metric
+				telemetry.OrdersFilled.WithLabelValues(fill.Instrument, string(fill.Side)).Inc()
+
 				// Update memory tracker state
 				gw.tracker.UpdateOrderState(fill.OrderID, exchange.StateFilled)
 
@@ -135,11 +139,18 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			gw.logger.Info("Exchange submission accepted", "orderID", intent.OrderID, "state", exchange.StateSubmitted)
 			gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateSubmitted)
 
+			// Track submitted orders metric
+			telemetry.OrdersSubmitted.WithLabelValues(intent.Instrument, string(intent.Side), string(intent.Type)).Inc()
+
 			// If the submission immediately returned filled units (e.g. filled MARKET orders), broadcast them.
 			// Fills received via WebSocket will be deduplicated downstream by sequence timestamps/IDs,
 			// but we also submit it here if filled quantity is positive.
 			if fill.Quantity > 0 {
 				gw.logger.Info("Immediate fill detected on submission", "orderID", fill.OrderID, "qty", fill.Quantity, "price", fill.FillPrice)
+
+				// Track filled orders metric
+				telemetry.OrdersFilled.WithLabelValues(fill.Instrument, string(fill.Side)).Inc()
+
 				gw.tracker.UpdateOrderState(fill.OrderID, exchange.StateFilled)
 				if prodErr := gw.producer.PublishFill(ctx, fill); prodErr != nil {
 					gw.logger.Error("Failed to broadcast immediate execution fill", "orderID", fill.OrderID, "error", prodErr)

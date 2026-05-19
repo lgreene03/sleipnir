@@ -64,7 +64,7 @@ type ExchangeConnector interface {
 	CancelOrder(ctx context.Context, orderID string, instrument string) error
 
 	// GetOrderState queries the live exchange for the state of an order.
-	GetOrderState(ctx context.Context, orderID string, instrument string) (OrderState, error)
+	GetOrderState(ctx context.Context, orderID string, instrument string) (OrderState, float64, float64, error)
 
 	// StartUserStream opens a real-time stream (e.g. WebSockets) to consume execution reports.
 	StartUserStream(ctx context.Context, fillChan chan<- ExecutionFill) error

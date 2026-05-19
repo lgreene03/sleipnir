@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -124,4 +125,83 @@ func TestOrderTrackerConcurrency(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestSQLiteOrderStorePersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_sleipnir.db")
+
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	order := exchange.Order{
+		OrderID:    "test-123",
+		Instrument: "BTC-USD",
+		Side:       exchange.SideBuy,
+		Quantity:   0.5,
+		Price:      60000.0,
+		Type:       exchange.TypeLimit,
+	}
+
+	ctx := context.Background()
+
+	// 1. Save
+	err = store.SaveOrder(ctx, order, exchange.StateSubmitted)
+	if err != nil {
+		t.Fatalf("failed to save order: %v", err)
+	}
+
+	// 2. Fetch Active
+	orders, states, filledQtys, err := store.GetActiveOrders(ctx)
+	if err != nil {
+		t.Fatalf("failed to get active orders: %v", err)
+	}
+
+	if len(orders) != 1 {
+		t.Fatalf("expected 1 active order, got %d", len(orders))
+	}
+	if orders[0].OrderID != "test-123" {
+		t.Errorf("expected ID 'test-123', got %s", orders[0].OrderID)
+	}
+	if states["test-123"] != exchange.StateSubmitted {
+		t.Errorf("expected state 'SUBMITTED', got %s", states["test-123"])
+	}
+	if filledQtys["test-123"] != 0.0 {
+		t.Errorf("expected filled qty 0.0, got %f", filledQtys["test-123"])
+	}
+
+	// 3. Update
+	err = store.UpdateOrderState(ctx, "test-123", exchange.StatePartiallyFilled, 0.2)
+	if err != nil {
+		t.Fatalf("failed to update order state: %v", err)
+	}
+
+	// Verify update
+	orders, states, filledQtys, err = store.GetActiveOrders(ctx)
+	if err != nil {
+		t.Fatalf("failed to get active orders: %v", err)
+	}
+	if states["test-123"] != exchange.StatePartiallyFilled {
+		t.Errorf("expected state 'PARTIALLY_FILLED', got %s", states["test-123"])
+	}
+	if filledQtys["test-123"] != 0.2 {
+		t.Errorf("expected filled qty 0.2, got %f", filledQtys["test-123"])
+	}
+
+	// 4. Update to Terminal State (should not be in active orders)
+	err = store.UpdateOrderState(ctx, "test-123", exchange.StateFilled, 0.5)
+	if err != nil {
+		t.Fatalf("failed to update to terminal state: %v", err)
+	}
+
+	orders, _, _, err = store.GetActiveOrders(ctx)
+	if err != nil {
+		t.Fatalf("failed to get active orders: %v", err)
+	}
+	if len(orders) != 0 {
+		t.Errorf("expected 0 active orders after setting terminal state, got %d", len(orders))
+	}
 }
