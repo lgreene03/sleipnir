@@ -27,7 +27,7 @@ services:
       redpanda:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       - KAFKA_BROKERS=redpanda:29092
       - KAFKA_INTENTS_TOPIC=executions.intents.v1
