@@ -37,8 +37,8 @@ services:
       - KAFKA_INTENTS_TOPIC=executions.intents.v1
       - KAFKA_FILLS_TOPIC=executions.fills.v1
       - KAFKA_CONSUMER_GROUP=sleipnir-gateway
-      - BINANCE_API_KEY=PLACEHOLDER_KEY_REPLACE_WITH_YOURS
-      - BINANCE_API_SECRET=PLACEHOLDER_SECRET_REPLACE_WITH_YOURS
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
       - BINANCE_REST_URL=https://testnet.binance.vision
       - BINANCE_WS_URL=wss://testnet.binance.vision/ws
       - RATE_LIMIT_RPS=10.0

@@ -1,0 +1,9 @@
+# Local environment credentials
+.env
+
+# Go binaries and compilation artifacts
+bin/
+sleipnir
+
+# Local OS files
+.DS_Store
