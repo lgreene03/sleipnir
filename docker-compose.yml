@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Redpanda provides a high-performance, single-binary Kafka-compatible message broker
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.6
+    container_name: sleipnir-redpanda
+    command: >
+      redpanda start
+      --one-node
+      --mode dev-container
+      --smp 1
+      --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  # Sleipnir Order Execution Gateway
+  sleipnir:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sleipnir-gateway
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+      - KAFKA_INTENTS_TOPIC=executions.intents.v1
+      - KAFKA_FILLS_TOPIC=executions.fills.v1
+      - KAFKA_CONSUMER_GROUP=sleipnir-gateway
+      - BINANCE_API_KEY=PLACEHOLDER_KEY_REPLACE_WITH_YOURS
+      - BINANCE_API_SECRET=PLACEHOLDER_SECRET_REPLACE_WITH_YOURS
+      - BINANCE_REST_URL=https://testnet.binance.vision
+      - BINANCE_WS_URL=wss://testnet.binance.vision/ws
+      - RATE_LIMIT_RPS=10.0
+      - PORT=8080
+    restart: on-failure

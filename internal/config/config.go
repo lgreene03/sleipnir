@@ -1,0 +1,41 @@
+package config
+
+import (
+	"fmt"
+
+	"github.com/kelseyhightower/envconfig"
+)
+
+// Config holds the service configuration for Sleipnir.
+type Config struct {
+	KafkaBrokers       []string `envconfig:"KAFKA_BROKERS" default:"localhost:9092"`
+	KafkaIntentsTopic  string   `envconfig:"KAFKA_INTENTS_TOPIC" default:"executions.intents.v1"`
+	KafkaFillsTopic    string   `envconfig:"KAFKA_FILLS_TOPIC" default:"executions.fills.v1"`
+	KafkaConsumerGroup string   `envconfig:"KAFKA_CONSUMER_GROUP" default:"sleipnir-gateway"`
+
+	BinanceAPIKey    string `envconfig:"BINANCE_API_KEY"`
+	BinanceAPISecret string `envconfig:"BINANCE_API_SECRET"`
+	BinanceRESTURL   string `envconfig:"BINANCE_REST_URL" default:"https://testnet.binance.vision"`
+	BinanceWSURL     string `envconfig:"BINANCE_WS_URL" default:"wss://testnet.binance.vision/ws"`
+
+	RateLimitRPS float64 `envconfig:"RATE_LIMIT_RPS" default:"10.0"`
+	Port         string  `envconfig:"PORT" default:"8080"`
+}
+
+// LoadConfig reads configuration from the environment and validates required fields.
+func LoadConfig() (*Config, error) {
+	var cfg Config
+	if err := envconfig.Process("", &cfg); err != nil {
+		return nil, fmt.Errorf("failed to process environment config: %w", err)
+	}
+
+	// Validate required exchange parameters
+	if cfg.BinanceAPIKey == "" {
+		return nil, fmt.Errorf("missing BINANCE_API_KEY environment variable")
+	}
+	if cfg.BinanceAPISecret == "" {
+		return nil, fmt.Errorf("missing BINANCE_API_SECRET environment variable")
+	}
+
+	return &cfg, nil
+}
