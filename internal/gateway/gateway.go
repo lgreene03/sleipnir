@@ -1,3 +1,8 @@
+// Package gateway is sleipnir's core coordinator: it consumes execution
+// intents from Kafka, runs pre-trade risk checks (rate limit + per-instrument
+// size + daily count), submits via the ExchangeConnector, tracks order
+// lifecycle in SQLite (OrderStore + OrderTracker), and forwards
+// WS-discovered fills back to the producer. See docs/ARCHITECTURE.md.
 package gateway
 
 import (
