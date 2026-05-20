@@ -91,9 +91,9 @@ func TestGatewayE2E_HappyPath(t *testing.T) {
 
 	gw := NewGateway(
 		consumer, publisher, sim, tracker, limiter,
-		10.0,  // maxOrderQtyBTC — generous
-		100.0, // maxOrderQtyETH
-		100,   // maxDailyOrders
+		NewLegacyRiskPolicy(10.0, 100.0), // generous caps
+		NewHalt(),
+		100, // maxDailyOrders
 		slog.Default(),
 	)
 
@@ -156,7 +156,9 @@ func TestGatewayE2E_RiskRejectionDoesNotEmitFill(t *testing.T) {
 	gw := NewGateway(
 		consumer, publisher, sim,
 		NewOrderTracker(), NewTokenBucketLimiter(1000),
-		0.001, 0.001, 100, // tight caps → rejection
+		NewLegacyRiskPolicy(0.001, 0.001), // tight caps → rejection
+		NewHalt(),
+		100,
 		slog.Default(),
 	)
 

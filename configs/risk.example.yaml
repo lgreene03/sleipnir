@@ -1,0 +1,33 @@
+# Sleipnir risk policy — example.
+# Set RISK_CONFIG_PATH to point at a real risk.yaml (this file or your own).
+# When unset, sleipnir falls back to a hardcoded BTC/ETH-only policy with
+# NO cap on other instruments (audit C3). Land a real risk.yaml ASAP.
+
+# Defaults applied when an intent's instrument is not in `instruments` below.
+# Zero ⇒ deny: an unknown instrument with non-zero defaults gets denied if
+# it exceeds them. With both defaults zero, unknown instruments pass freely
+# (legacy behaviour). Set both to deny-by-default once you've enumerated
+# every instrument you intend to trade.
+default_max_qty: 0.0
+default_max_notional: 0.0
+
+instruments:
+  BTC-USD:
+    max_qty: 0.10           # max base-asset units per intent
+    max_notional: 100000.0  # max quote-currency notional (qty * price)
+    min_qty: 0.0001         # below this, reject — saves on dust fills
+
+  BTCUSDT:
+    max_qty: 0.10
+    max_notional: 100000.0
+    min_qty: 0.0001
+
+  ETH-USD:
+    max_qty: 2.0
+    max_notional: 100000.0
+    min_qty: 0.001
+
+  ETHUSDT:
+    max_qty: 2.0
+    max_notional: 100000.0
+    min_qty: 0.001

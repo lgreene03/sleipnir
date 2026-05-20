@@ -261,7 +261,7 @@ func TestGatewayPreTradeRiskLimits(t *testing.T) {
 	// MaxOrderQtyBTC = 0.1
 	// MaxOrderQtyETH = 2.0
 	// MaxDailyOrders = 2
-	gw := NewGateway(nil, nil, nil, tracker, nil, 0.1, 2.0, 2, nil)
+	gw := NewGateway(nil, nil, nil, tracker, nil, NewLegacyRiskPolicy(0.1, 2.0), NewHalt(), 2, nil)
 
 	ctx := context.Background()
 

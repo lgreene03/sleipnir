@@ -62,10 +62,11 @@ Defined in sleipnir at `internal/exchange/connector.go`. Huginn's matching type 
 | `execution_id` | string | Deterministic per-fill identity. Used by huginn for cross-restart deduplication. See construction patterns below. |
 | `instrument` | string | Canonical form (same as intent). |
 | `side` | string | `BUY` or `SELL`. |
-| `quantity` | float64 | Delta quantity for this fill (not cumulative). Today's gateway emits one event per WS `executionReport`. |
+| `order_status` | string | **Phase 5 addition.** Exchange-reported lifecycle state. `FILLED` for terminal fills, `PARTIALLY_FILLED` for partials. Empty on legacy producers; consumers should treat empty as `FILLED`. |
+| `quantity` | float64 | Delta quantity for this fill (not cumulative). |
 | `fill_price` | float64 | Trade price. |
-| `transaction_cost` | float64 | Commission in quote-currency units. **Currently 0.0 from the REST submit path and the reconciliation backfill** — audit L6, remaining Phase 5 work. |
-| `timestamp` | string | RFC3339. Should be the exchange transaction time. Today's reconciliation path uses `time.Now()` — remaining Phase 5 work. |
+| `transaction_cost` | float64 | Commission in **the asset Binance reports it in** (typically BNB or the quote currency). Pre-Phase-5 this was hardcoded 0.0 on the REST path; now summed from `fills[]`. Quote-currency normalization is deferred — operators comparing costs across instruments should track this themselves. |
+| `timestamp` | string | RFC3339. Exchange transaction time on all three production paths (WS, REST submit response, boot reconciliation). |
 
 ### `execution_id` construction
 

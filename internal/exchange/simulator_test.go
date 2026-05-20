@@ -37,14 +37,14 @@ func TestSimulator_SubmitFillsSynchronously(t *testing.T) {
 func TestSimulator_GetOrderState(t *testing.T) {
 	t.Parallel()
 	sim := NewSimulatorConnector(SimulatorConfig{}, nil)
-	if s, _, _, _ := sim.GetOrderState(context.Background(), "missing", "BTC-USD"); s != StatePending {
-		t.Errorf("expected StatePending for unseen order, got %s", s)
+	if r, _ := sim.GetOrderState(context.Background(), "missing", "BTC-USD"); r.State != StatePending {
+		t.Errorf("expected StatePending for unseen order, got %s", r.State)
 	}
 	_, _ = sim.SubmitOrder(context.Background(), Order{
 		OrderID: "ord-x", Instrument: "BTC-USD", Side: SideBuy, Quantity: 0.01, Price: 100,
 	})
-	if s, _, _, _ := sim.GetOrderState(context.Background(), "ord-x", "BTC-USD"); s != StateFilled {
-		t.Errorf("expected StateFilled after Submit, got %s", s)
+	if r, _ := sim.GetOrderState(context.Background(), "ord-x", "BTC-USD"); r.State != StateFilled {
+		t.Errorf("expected StateFilled after Submit, got %s", r.State)
 	}
 	if err := sim.CancelOrder(context.Background(), "ord-x", "BTC-USD"); err != nil {
 		t.Fatalf("CancelOrder: %v", err)

@@ -144,7 +144,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 5 — Correctness hardening: idempotency, partial fills, reconciliation
+## Phase 5 — Correctness hardening: idempotency, partial fills, reconciliation 🟢
 
 **Goal.** Eliminate the double-counting fill bug and make the gateway crash-safe at message granularity.
 
@@ -165,7 +165,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 6 — Risk and ops controls
+## Phase 6 — Risk and ops controls 🟢
 
 **Goal.** Move from "demo-grade" risk to "would survive an unsupervised weekend on testnet".
 

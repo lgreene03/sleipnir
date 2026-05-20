@@ -59,16 +59,33 @@ type Order struct {
 //   - WebSocket execution:    "<clientOrderID>-ws-<binance trade id>"
 //   - Boot reconciliation:    "<clientOrderID>-reconcile-<filledQty>"
 //
+// OrderStatus carries the lifecycle state the exchange reports alongside the
+// fill (FILLED for terminal, PARTIALLY_FILLED for partial). Prior to Phase 5
+// the gateway treated every WS-delivered fill as terminal, silently
+// collapsing partial fills into one StateFilled transition; carrying the
+// status explicitly fixes that.
+//
 // See docs/CONTRACTS.md for the cross-repo contract with huginn.
 type ExecutionFill struct {
-	OrderID         string    `json:"order_id"`
-	ExecutionID     string    `json:"execution_id"`
-	Instrument      string    `json:"instrument"`
-	Side            OrderSide `json:"side"`
-	Quantity        float64   `json:"quantity"`
-	FillPrice       float64   `json:"fill_price"`
-	TransactionCost float64   `json:"transaction_cost"` // Fee incurred
-	Timestamp       time.Time `json:"timestamp"`
+	OrderID         string     `json:"order_id"`
+	ExecutionID     string     `json:"execution_id"`
+	Instrument      string     `json:"instrument"`
+	Side            OrderSide  `json:"side"`
+	OrderStatus     OrderState `json:"order_status"`     // Phase 5 addition
+	Quantity        float64    `json:"quantity"`
+	FillPrice       float64    `json:"fill_price"`
+	TransactionCost float64    `json:"transaction_cost"` // Fee incurred
+	Timestamp       time.Time  `json:"timestamp"`
+}
+
+// OrderStatusResult is what GetOrderState returns. Carrying a typed struct
+// (instead of four scalar returns) keeps the signature stable as we add fields
+// — e.g. Phase 5's TransactTime, planned future TimeInForce.
+type OrderStatusResult struct {
+	State        OrderState
+	ExecutedQty  float64
+	FillPrice    float64
+	TransactTime time.Time // exchange-reported, used by boot reconciliation
 }
 
 // ExchangeConnector represents a pluggable exchange API handler.
@@ -80,7 +97,10 @@ type ExchangeConnector interface {
 	CancelOrder(ctx context.Context, orderID string, instrument string) error
 
 	// GetOrderState queries the live exchange for the state of an order.
-	GetOrderState(ctx context.Context, orderID string, instrument string) (OrderState, float64, float64, error)
+	// The boot reconciliation path uses the returned TransactTime to stamp
+	// the synthesized backfill fill, replacing the previous time.Now() hack
+	// (audit finding L6).
+	GetOrderState(ctx context.Context, orderID string, instrument string) (OrderStatusResult, error)
 
 	// StartUserStream opens a real-time stream (e.g. WebSockets) to consume execution reports.
 	StartUserStream(ctx context.Context, fillChan chan<- ExecutionFill) error

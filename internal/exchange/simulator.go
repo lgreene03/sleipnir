@@ -118,6 +118,7 @@ func (s *SimulatorConnector) SubmitOrder(ctx context.Context, order Order) (Exec
 		ExecutionID:     executionID,
 		Instrument:      order.Instrument,
 		Side:            order.Side,
+		OrderStatus:     StateFilled, // simulator fully fills synchronously
 		Quantity:        order.Quantity,
 		FillPrice:       price,
 		TransactionCost: s.cfg.TransactionCost,
@@ -155,18 +156,21 @@ func (s *SimulatorConnector) CancelOrder(_ context.Context, orderID, instrument 
 }
 
 // GetOrderState returns whatever state the simulator last recorded for the
-// order, with executedQty = order.Quantity if filled and 0 otherwise.
-func (s *SimulatorConnector) GetOrderState(_ context.Context, orderID, _ string) (OrderState, float64, float64, error) {
+// order. The simulator doesn't carry per-order qty (the caller already has
+// it) — ExecutedQty is always 0 here.
+func (s *SimulatorConnector) GetOrderState(_ context.Context, orderID, _ string) (OrderStatusResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, ok := s.known[orderID]
 	if !ok {
-		return StatePending, 0, 0, nil
+		return OrderStatusResult{State: StatePending, TransactTime: s.cfg.Now()}, nil
 	}
-	// We don't carry per-order quantity here (intentional minimalism — the
-	// caller already has it). Tests asserting GetOrderState semantics work
-	// against the state value.
-	return state, 0, s.cfg.FillPrice, nil
+	return OrderStatusResult{
+		State:        state,
+		ExecutedQty:  0,
+		FillPrice:    s.cfg.FillPrice,
+		TransactTime: s.cfg.Now(),
+	}, nil
 }
 
 // StartUserStream subscribes the provided channel to subsequent simulator

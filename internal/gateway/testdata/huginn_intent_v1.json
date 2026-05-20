@@ -1,0 +1,8 @@
+{
+  "order_id": "huginn-1716123456789",
+  "instrument": "BTC-USD",
+  "side": "BUY",
+  "quantity": 0.001,
+  "price": 0.0,
+  "order_type": "MARKET"
+}

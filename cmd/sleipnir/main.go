@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -119,27 +120,36 @@ func main() {
 		for _, order := range activeOrders {
 			logger.Info("Querying live status for order", "orderID", order.OrderID, "instrument", order.Instrument)
 
-			exchState, exchFilledQty, exchPrice, err := connector.GetOrderState(reconcileCtx, order.OrderID, order.Instrument)
+			res, err := connector.GetOrderState(reconcileCtx, order.OrderID, order.Instrument)
 			if err != nil {
 				logger.Error("Failed to query order state on exchange during boot reconciliation", "orderID", order.OrderID, "error", err)
 				continue
 			}
 
 			prevFilledQty := filledQtys[order.OrderID]
-			deltaQty := exchFilledQty - prevFilledQty
+			deltaQty := res.ExecutedQty - prevFilledQty
 
 			logger.Info("Reconciliation details",
 				"orderID", order.OrderID,
 				"local_state", activeStates[order.OrderID],
-				"exchange_state", exchState,
+				"exchange_state", res.State,
 				"prev_filled_qty", prevFilledQty,
-				"exchange_filled_qty", exchFilledQty,
+				"exchange_filled_qty", res.ExecutedQty,
 				"delta_qty", deltaQty,
+				"transact_time", res.TransactTime,
 			)
 
 			if deltaQty > 0 {
 				logger.Info("Detected missed fills. Backfilling fill message to Kafka...", "orderID", order.OrderID, "qty", deltaQty)
 
+				// Phase 5 fix: timestamp the synthesized backfill with the
+				// exchange-reported transaction time, not time.Now() (audit
+				// finding L6). Falls back to now() only when the exchange
+				// returned a zero TransactTime (shouldn't happen, but safe).
+				ts := res.TransactTime
+				if ts.IsZero() {
+					ts = time.Now()
+				}
 				fill := exchange.ExecutionFill{
 					OrderID: order.OrderID,
 					// Stable across restarts: same (orderID, deltaQty) → same ExecutionID.
@@ -148,10 +158,11 @@ func main() {
 					ExecutionID:     fmt.Sprintf("%s-reconcile-%g", order.OrderID, deltaQty),
 					Instrument:      order.Instrument,
 					Side:            order.Side,
+					OrderStatus:     res.State,
 					Quantity:        deltaQty,
-					FillPrice:       exchPrice,
+					FillPrice:       res.FillPrice,
 					TransactionCost: 0.0,
-					Timestamp:       time.Now(),
+					Timestamp:       ts,
 				}
 
 				if err := producer.PublishFill(reconcileCtx, fill); err != nil {
@@ -162,11 +173,25 @@ func main() {
 			}
 
 			// Synchronize status in tracking memory & persistent DB
-			tracker.UpdateOrderStateAndQty(order.OrderID, exchState, exchFilledQty)
+			tracker.UpdateOrderStateAndQty(order.OrderID, res.State, res.ExecutedQty)
 		}
 		logger.Info("Active boot-time reconciliation completed successfully.")
 	}
 	reconcileCancel()
+
+	// Phase 6 risk policy: prefer the operator's risk.yaml when configured;
+	// fall back to the legacy hardcoded BTC/ETH caps so existing deployments
+	// don't break. See audit C3 — operators should land a risk.yaml ASAP.
+	riskPolicy, err := gateway.LoadRiskPolicy(os.Getenv("RISK_CONFIG_PATH"))
+	if err != nil {
+		logger.Error("Failed to load risk policy", "error", err)
+		os.Exit(1)
+	}
+	if riskPolicy == nil {
+		logger.Warn("RISK_CONFIG_PATH not set — using legacy hardcoded BTC/ETH-only caps. Non-BTC/ETH instruments will pass without a size cap. See docs/SECURITY_AUDIT.md C3.")
+		riskPolicy = gateway.NewLegacyRiskPolicy(cfg.MaxOrderQtyBTC, cfg.MaxOrderQtyETH)
+	}
+	halt := gateway.NewHalt()
 
 	gw := gateway.NewGateway(
 		consumer,
@@ -174,8 +199,8 @@ func main() {
 		connector,
 		tracker,
 		limiter,
-		cfg.MaxOrderQtyBTC,
-		cfg.MaxOrderQtyETH,
+		riskPolicy,
+		halt,
 		cfg.MaxDailyOrders,
 		logger,
 	)
@@ -183,7 +208,7 @@ func main() {
 	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           healthHandler(tracker),
+		Handler:           healthHandler(tracker, gw, halt),
 		ReadHeaderTimeout: 10 * time.Second, // mitigates Slowloris (gosec G112)
 	}
 
@@ -229,19 +254,67 @@ func main() {
 	}
 }
 
-// healthHandler serves liveness probes, active trading telemetry, and Prometheus /metrics.
-func healthHandler(tracker *gateway.OrderTracker) http.Handler {
+// healthHandler serves liveness probes, /readyz, active trading telemetry,
+// the operator kill switch, and Prometheus /metrics.
+//
+// Endpoint contract:
+//
+//	GET  /healthz      always 200 if the process is up
+//	GET  /readyz       200 once the gateway has consumed ≥ 1 intent; 503 otherwise
+//	GET  /telemetry    active-order count snapshot
+//	POST /admin/halt   flip the in-memory kill switch; body: {"reason":"…"}
+//	POST /admin/resume clear the kill switch
+//	GET  /admin/halt   current halt status JSON
+//	GET  /metrics      Prometheus
+func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gateway.Halt) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"OK","service":"sleipnir"}`))
 	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if gw.IsReady() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"READY"}`))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"NOT_READY"}`))
+	})
 	mux.HandleFunc("/telemetry", func(w http.ResponseWriter, r *http.Request) {
 		activeOrders := tracker.GetAllActiveOrders()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d}`, len(activeOrders))
+		fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d,"halted":%t}`, len(activeOrders), halt.IsHalted())
+	})
+	mux.HandleFunc("/admin/halt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprintf(w, `{"halted":%t,"reason":%q}`, halt.IsHalted(), halt.Reason())
+		case http.MethodPost:
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			halt.Set(body.Reason)
+			slog.Warn("Operator kill switch engaged", "reason", halt.Reason())
+			fmt.Fprintf(w, `{"halted":true,"reason":%q}`, halt.Reason())
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/admin/resume", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		halt.Clear()
+		slog.Info("Operator kill switch cleared")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"halted":false}`))
 	})
 	mux.Handle("/metrics", promhttp.Handler())
 	return mux
