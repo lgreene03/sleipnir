@@ -160,7 +160,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			if err != nil {
 				gw.logger.Error("Exchange submission failed", "orderID", intent.OrderID, "error", err)
 				gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateRejected)
-				
+
 				// Commit offset even on rejection to prevent poisonous message loops
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 					gw.logger.Error("Failed to commit offset after rejection", "orderID", intent.OrderID, "error", commitErr)

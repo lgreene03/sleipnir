@@ -55,7 +55,7 @@ func main() {
 	if dbPath == "" {
 		dbPath = "/app/data/sleipnir.db"
 	}
-	
+
 	logger.Info("Initializing persistent SQLite database...", "path", dbPath)
 	store, err := gateway.NewSQLiteOrderStore(dbPath)
 	if err != nil {
@@ -67,7 +67,7 @@ func main() {
 	// Initialize the tracker and preload non-terminal active orders
 	tracker := gateway.NewOrderTracker().WithStore(store)
 	limiter := gateway.NewTokenBucketLimiter(cfg.RateLimitRPS)
-	
+
 	connector := exchange.NewBinanceConnector(
 		cfg.BinanceAPIKey,
 		cfg.BinanceAPISecret,
@@ -92,7 +92,7 @@ func main() {
 	// 5. Active Boot-Time Reconciliation Loop
 	logger.Info("Performing boot-time order reconciliation against live exchange status...")
 	reconcileCtx, reconcileCancel := context.WithTimeout(ctx, 30*time.Second)
-	
+
 	activeOrders, activeStates, filledQtys, err := store.GetActiveOrders(reconcileCtx)
 	if err != nil {
 		logger.Error("Failed to query active orders for reconciliation", "error", err)
@@ -100,7 +100,7 @@ func main() {
 		logger.Info("Found outstanding active orders in local store to reconcile", "count", len(activeOrders))
 		for _, order := range activeOrders {
 			logger.Info("Querying live status for order", "orderID", order.OrderID, "instrument", order.Instrument)
-			
+
 			exchState, exchFilledQty, exchPrice, err := connector.GetOrderState(reconcileCtx, order.OrderID, order.Instrument)
 			if err != nil {
 				logger.Error("Failed to query order state on exchange during boot reconciliation", "orderID", order.OrderID, "error", err)
@@ -109,19 +109,19 @@ func main() {
 
 			prevFilledQty := filledQtys[order.OrderID]
 			deltaQty := exchFilledQty - prevFilledQty
-			
-			logger.Info("Reconciliation details", 
-				"orderID", order.OrderID, 
-				"local_state", activeStates[order.OrderID], 
-				"exchange_state", exchState, 
-				"prev_filled_qty", prevFilledQty, 
+
+			logger.Info("Reconciliation details",
+				"orderID", order.OrderID,
+				"local_state", activeStates[order.OrderID],
+				"exchange_state", exchState,
+				"prev_filled_qty", prevFilledQty,
 				"exchange_filled_qty", exchFilledQty,
 				"delta_qty", deltaQty,
 			)
 
 			if deltaQty > 0 {
 				logger.Info("Detected missed fills. Backfilling fill message to Kafka...", "orderID", order.OrderID, "qty", deltaQty)
-				
+
 				fill := exchange.ExecutionFill{
 					OrderID: order.OrderID,
 					// Stable across restarts: same (orderID, deltaQty) → same ExecutionID.

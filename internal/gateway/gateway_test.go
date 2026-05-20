@@ -357,4 +357,3 @@ func TestGatewayPreTradeRiskLimits(t *testing.T) {
 		t.Errorf("expected rejection reason 'daily_count_exceeded', got %s", reason)
 	}
 }
-
