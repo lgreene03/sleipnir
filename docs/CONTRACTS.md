@@ -45,42 +45,40 @@ Defined in sleipnir at `internal/exchange/connector.go`. Huginn's matching type 
 
 ```json
 {
-  "orderID":         "huginn-1716123456789",
-  "instrument":      "BTC-USD",
-  "side":            "BUY",
-  "filledQuantity":  0.001,
-  "fillPrice":       43520.10,
-  "transactionCost": 0.04352,
-  "timestamp":       "2026-05-19T18:30:01.234Z"
+  "order_id":         "huginn-1716123456789",
+  "execution_id":     "huginn-1716123456789-ws-987654321",
+  "instrument":       "BTC-USD",
+  "side":             "BUY",
+  "quantity":         0.001,
+  "fill_price":       43520.10,
+  "transaction_cost": 0.04352,
+  "timestamp":        "2026-05-19T18:30:01.234Z"
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `orderID` | string | Echoes the inbound intent's `orderID`. |
+| `order_id` | string | Echoes the inbound intent's `order_id`. |
+| `execution_id` | string | Deterministic per-fill identity. Used by huginn for cross-restart deduplication. See construction patterns below. |
 | `instrument` | string | Canonical form (same as intent). |
 | `side` | string | `BUY` or `SELL`. |
-| `filledQuantity` | float64 | Delta quantity for this fill (not cumulative). Today's gateway emits one event per WS `executionReport`. |
-| `fillPrice` | float64 | Trade price. |
-| `transactionCost` | float64 | Commission in quote-currency units. **Currently 0.0 from the REST submit path and the reconciliation backfill** — audit L6, fixed in roadmap Phase 5. |
-| `timestamp` | string | RFC3339. Should be the exchange transaction time. Today's reconciliation path uses `time.Now()` — also Phase 5. |
+| `quantity` | float64 | Delta quantity for this fill (not cumulative). Today's gateway emits one event per WS `executionReport`. |
+| `fill_price` | float64 | Trade price. |
+| `transaction_cost` | float64 | Commission in quote-currency units. **Currently 0.0 from the REST submit path and the reconciliation backfill** — audit L6, remaining Phase 5 work. |
+| `timestamp` | string | RFC3339. Should be the exchange transaction time. Today's reconciliation path uses `time.Now()` — remaining Phase 5 work. |
 
-## Planned: `executionID` (Phase 5 addition)
+### `execution_id` construction
 
-**Not yet on the wire.** Phase 5 of the roadmap adds an `executionID` field to `ExecutionFill`:
+Three codepaths produce fills, each with a stable construction pattern. No two real fills across the three paths can collide.
 
-```json
-{
-  ...
-  "executionID": "huginn-1716123456789-tradeId-987654321"
-}
-```
-
-| Field | Type | Notes |
+| Source | Pattern | Example |
 |---|---|---|
-| `executionID` | string | Deterministic per-fill identity. For Binance: `<clientOrderId>-<tradeId>`. For the planned simulator: monotonic counter scoped to `orderID`. For reconciliation backfill: `<orderID>-reconcile-<filledQty>`. |
+| REST submit response (`SubmitOrder`) | `<order_id>-rest-<binance order id>` | `huginn-1716123456789-rest-12345` |
+| WebSocket `executionReport` | `<order_id>-ws-<binance trade id>` | `huginn-1716123456789-ws-987654321` |
+| WebSocket fallback (trade id absent) | `<order_id>-ws-<transact_time_ms>-<qty_string>` | `huginn-1716123456789-ws-1716123456789-0.00100000` |
+| Boot reconciliation backfill | `<order_id>-reconcile-<delta_qty>` | `huginn-1716123456789-reconcile-0.001` |
 
-Huginn's `executor.OnExecutionFill` will keep an LRU of seen `executionID`s and drop duplicates. This is what makes the cross-restart reconciliation path safe and eliminates today's double-counting bug.
+Huginn's `executor.OnExecutionFill` keeps a bounded LRU (10 000 entries) of seen `execution_id` values and drops duplicates with a WARN log. This is what makes the cross-restart reconciliation path safe.
 
 ## Wire-format change protocol
 

@@ -123,7 +123,11 @@ func main() {
 				logger.Info("Detected missed fills. Backfilling fill message to Kafka...", "orderID", order.OrderID, "qty", deltaQty)
 				
 				fill := exchange.ExecutionFill{
-					OrderID:         order.OrderID,
+					OrderID: order.OrderID,
+					// Stable across restarts: same (orderID, deltaQty) → same ExecutionID.
+					// Huginn's LRU dedup uses this to drop the event if it has already
+					// applied the WS fill that this reconciliation is backfilling.
+					ExecutionID:     fmt.Sprintf("%s-reconcile-%g", order.OrderID, deltaQty),
 					Instrument:      order.Instrument,
 					Side:            order.Side,
 					Quantity:        deltaQty,

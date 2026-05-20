@@ -45,8 +45,19 @@ type Order struct {
 }
 
 // ExecutionFill represents a verified execution transaction block from the exchange.
+//
+// ExecutionID provides a deterministic per-fill identity so downstream consumers
+// (notably huginn's executor) can drop duplicate events on restart-or-replay paths.
+// Construction follows three patterns, all collision-free across restarts:
+//
+//   - REST submit response:   "<clientOrderID>-rest-<binance order id>"
+//   - WebSocket execution:    "<clientOrderID>-ws-<binance trade id>"
+//   - Boot reconciliation:    "<clientOrderID>-reconcile-<filledQty>"
+//
+// See docs/CONTRACTS.md for the cross-repo contract with huginn.
 type ExecutionFill struct {
 	OrderID         string    `json:"order_id"`
+	ExecutionID     string    `json:"execution_id"`
 	Instrument      string    `json:"instrument"`
 	Side            OrderSide `json:"side"`
 	Quantity        float64   `json:"quantity"`

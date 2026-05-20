@@ -1,9 +1,14 @@
 # Local environment credentials
 .env
 
-# Go binaries and compilation artifacts
+# Go binaries and compilation artifacts.
+# `/sleipnir` is anchored to repo root so cmd/sleipnir/ source stays tracked
+# (without the leading slash this pattern would match the cmd subdirectory too,
+# the same bug huginn just fixed).
 bin/
-sleipnir
+/sleipnir
+/mock_huginn
+/mock_muninn
 
 # Local OS files
 .DS_Store

@@ -172,6 +172,7 @@ func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (Execu
 
 	return ExecutionFill{
 		OrderID:         binanceResp.ClientOrderID,
+		ExecutionID:     fmt.Sprintf("%s-rest-%d", binanceResp.ClientOrderID, binanceResp.OrderID),
 		Instrument:      TranslateToDownstream(binanceResp.Symbol),
 		Side:            order.Side,
 		Quantity:        executedQty,
@@ -453,6 +454,11 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 					lastPriceStr, _ := payload["L"].(string)
 					commissionStr, _ := payload["n"].(string) // or fee amount
 
+					// Trade ID per Binance executionReport schema field "t" (int64).
+					// Falls back to 0 if absent; the executionID still encodes the timestamp.
+					tradeIDFloat, _ := payload["t"].(float64)
+					tradeID := int64(tradeIDFloat)
+
 					transactTimeFloat, ok := payload["T"].(float64)
 					var transTime int64
 					if ok {
@@ -469,8 +475,17 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 
 						// Only notify downstream if there is actual filled quantity on this event
 						if qty > 0 {
+							var executionID string
+							if tradeID != 0 {
+								executionID = fmt.Sprintf("%s-ws-%d", clientOrderID, tradeID)
+							} else {
+								// Trade-id absent on this event type; fall back to timestamp+qty
+								// (still deterministic within a single submission's fill stream).
+								executionID = fmt.Sprintf("%s-ws-%d-%s", clientOrderID, transTime, lastFilledQtyStr)
+							}
 							fill := ExecutionFill{
 								OrderID:         clientOrderID,
+								ExecutionID:     executionID,
 								Instrument:      TranslateToDownstream(symbol),
 								Side:            OrderSide(sideStr),
 								Quantity:        qty,
