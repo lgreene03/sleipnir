@@ -95,13 +95,15 @@ Frozen wire definitions live in **[`docs/CONTRACTS.md`](docs/CONTRACTS.md)**. Th
 
 ```bash
 make build          # build all binaries
-make test           # go test -race -cover
+make test           # go test ./...
+make test-race      # go test -race -coverprofile=cover.out
 make lint           # golangci-lint
+make ci             # mirror what GitHub Actions runs on every PR
 make compose-up     # docker compose up -d
 make compose-down   # docker compose down -v
 ```
 
-CI lives in `.github/workflows/ci.yml` (added in Phase 2 of the roadmap).
+CI lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml): Go 1.25 build + vet + `-race` + coverage upload, `golangci-lint`, and a non-pushing Docker build verification. Dependabot is wired in [`.github/dependabot.yml`](.github/dependabot.yml).
 
 ## Project documents
 

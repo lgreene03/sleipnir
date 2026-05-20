@@ -1,0 +1,33 @@
+version: 2
+
+# Keep go modules and GitHub Actions versions fresh. Docker base image
+# updates fire when the Dockerfile is digest-pinned in Phase 8; until then
+# the floating alpine:3.20 tag floats on its own.
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      observability:
+        patterns:
+          - "github.com/prometheus/*"
+      kafka:
+        patterns:
+          - "github.com/segmentio/kafka-go"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3

@@ -88,7 +88,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 2 — CI, lint, and test hygiene
+## Phase 2 — CI, lint, and test hygiene ✅
 
 **Goal.** Make every PR provably green before merge.
 

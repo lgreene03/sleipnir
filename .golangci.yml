@@ -1,4 +1,5 @@
 # golangci-lint configuration for sleipnir.
+#
 # Tuned to the existing codebase: strict enough to catch real bugs,
 # permissive on the stylistic dimensions that don't matter at this scale.
 
@@ -26,15 +27,14 @@ linters:
 
 linters-settings:
   gosec:
-    # G104 (errors not checked) is covered by errcheck; G115 (integer overflow conversion)
-    # is too noisy for our risk-calc code where the cast is intentional.
+    # Skip a couple of high-noise rules:
+    # - G104 (errors not checked) is covered by errcheck
+    # - G115 (integer overflow conversion) fires on intentional int64→int casts
+    # - G404 (math/rand) is fine for jitter / backoff (not cryptographic)
     excludes:
       - G104
       - G115
-    # Pay particular attention to credential paths.
-    config:
-      G101:
-        pattern: '(?i)(api[_-]?key|api[_-]?secret|token|password)'
+      - G404
   errcheck:
     check-blank: true
     check-type-assertions: true

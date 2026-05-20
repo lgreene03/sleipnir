@@ -6,7 +6,7 @@ GOLANGCI_LINT ?= golangci-lint
 DOCKER        ?= docker
 COMPOSE       ?= docker compose
 
-.PHONY: help build test test-race test-cover lint fmt vet \
+.PHONY: help build test test-race test-cover lint fmt vet ci \
         compose-up compose-down compose-logs \
         integration clean tidy
 
@@ -40,6 +40,8 @@ fmt: ## Run gofmt on all .go files.
 
 tidy: ## go mod tidy.
 	$(GO) mod tidy
+
+ci: vet test-race lint ## Mirror what .github/workflows/ci.yml runs on every PR.
 
 compose-up: ## Bring the local stack up (sleipnir + redpanda + mocks + prom + grafana).
 	$(COMPOSE) up -d --build
