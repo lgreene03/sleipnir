@@ -1,20 +1,22 @@
-# golangci-lint configuration for sleipnir.
+# golangci-lint v2 configuration for sleipnir.
 #
-# Tuned to the existing codebase: strict enough to catch real bugs,
-# permissive on the stylistic dimensions that don't matter at this scale.
+# v2 is required because the project's go.mod targets Go 1.25 and the last
+# v1 release (1.64.8) was built with Go 1.24 — it refuses to lint modules
+# whose `go` directive exceeds its build version.
+
+version: "2"
 
 run:
   timeout: 5m
   tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - bodyclose       # response.Body.Close on every HTTP call (matters in internal/exchange)
     - contextcheck    # context propagation
     - errcheck        # unhandled error returns
     - errorlint       # %w vs %v, errors.Is/As correctness
-    - gofumpt         # stricter gofmt
     - gosec           # security findings (HMAC, secrets, weak crypto)
     - govet           # standard vet rules
     - ineffassign     # unused assignments
@@ -25,34 +27,36 @@ linters:
     - unused          # unused symbols
     - whitespace      # leading/trailing blank lines in func bodies
 
-linters-settings:
-  gosec:
-    # Skip a couple of high-noise rules:
-    # - G104 (errors not checked) is covered by errcheck
-    # - G115 (integer overflow conversion) fires on intentional int64→int casts
-    # - G404 (math/rand) is fine for jitter / backoff (not cryptographic)
-    excludes:
-      - G104
-      - G115
-      - G404
-  errcheck:
-    check-blank: true
-    check-type-assertions: true
-  revive:
-    rules:
-      - name: exported
-        disabled: true   # docstrings are nice-to-have, not a blocker
+  settings:
+    errcheck:
+      check-blank: true
+      check-type-assertions: true
+    gosec:
+      # Skip a couple of high-noise rules:
+      # - G104 (errors not checked) is covered by errcheck
+      # - G115 (integer overflow conversion) fires on intentional int64→int casts
+      # - G404 (math/rand) is fine for jitter / backoff (not cryptographic)
+      excludes:
+        - G104
+        - G115
+        - G404
+    revive:
+      rules:
+        - name: exported
+          disabled: true   # docstrings are nice-to-have, not a blocker
 
-issues:
-  exclude-rules:
-    # Test files: allow looser error handling.
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-    # Mock binaries: allow log.Fatal idiom.
-    - path: cmd/mock_(huginn|muninn)/
-      linters:
-        - revive
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  exclusions:
+    rules:
+      # Test files: allow looser error handling.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+      # Mock binaries: allow log.Fatal idiom.
+      - path: cmd/mock_(huginn|muninn)/
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofumpt   # gofumpt is a formatter in v2, not a linter

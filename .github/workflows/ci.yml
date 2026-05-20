@@ -60,7 +60,10 @@ jobs:
         with:
           go-version: "1.25"
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # Pin to v9 of the action — its default binary version is built with
+        # Go 1.25, matching our go.mod. Older actions (v6) shipped v1.64.x
+        # which refuses modules targeting Go > the linter's build version.
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           args: --timeout=5m
