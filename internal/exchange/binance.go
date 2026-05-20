@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -288,6 +289,13 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 
 	// Connect and start reader loop with automatic recovery
 	go func() {
+		baseDelay := 500 * time.Millisecond
+		maxDelay := 60 * time.Second
+		factor := 2.0
+		jitterPercent := 0.10
+
+		retryDelay := baseDelay
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -297,10 +305,30 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 
 			bc.logger.Info("Connecting to Binance WS API address", "url", bc.wsURL)
 
+			connectedAt := time.Now()
 			conn, _, err := websocket.DefaultDialer.DialContext(ctx, bc.wsURL, nil)
 			if err != nil {
-				bc.logger.Error("Failed to dial Binance WS API, retrying in 5 seconds", "error", err)
-				time.Sleep(5 * time.Second)
+				telemetry.WSConnectionDrops.Inc()
+
+				jitterVal := (rand.Float64() * 2.0 * jitterPercent) - jitterPercent
+				currentDelayWithJitter := time.Duration(float64(retryDelay) * (1.0 + jitterVal))
+				if currentDelayWithJitter > maxDelay {
+					currentDelayWithJitter = maxDelay
+				}
+
+				bc.logger.Error("Failed to dial Binance WS API, backing off", "error", err, "backoff", currentDelayWithJitter.String())
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(currentDelayWithJitter):
+				}
+
+				// Increase for next retry
+				retryDelay = time.Duration(float64(retryDelay) * factor)
+				if retryDelay > maxDelay {
+					retryDelay = maxDelay
+				}
 				continue
 			}
 
@@ -322,9 +350,33 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			}
 
 			if err := conn.WriteJSON(subscribeReq); err != nil {
-				bc.logger.Error("Failed to write subscription request, retrying in 5 seconds", "error", err)
+				bc.logger.Error("Failed to write subscription request", "error", err)
 				conn.Close()
-				time.Sleep(5 * time.Second)
+
+				telemetry.WSConnectionDrops.Inc()
+
+				if time.Since(connectedAt) > 30*time.Second {
+					retryDelay = baseDelay
+				}
+
+				jitterVal := (rand.Float64() * 2.0 * jitterPercent) - jitterPercent
+				currentDelayWithJitter := time.Duration(float64(retryDelay) * (1.0 + jitterVal))
+				if currentDelayWithJitter > maxDelay {
+					currentDelayWithJitter = maxDelay
+				}
+
+				bc.logger.Error("Failed to write subscription request, backing off", "error", err, "backoff", currentDelayWithJitter.String())
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(currentDelayWithJitter):
+				}
+
+				retryDelay = time.Duration(float64(retryDelay) * factor)
+				if retryDelay > maxDelay {
+					retryDelay = maxDelay
+				}
 				continue
 			}
 
@@ -334,9 +386,34 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			for {
 				_, msg, err := conn.ReadMessage()
 				if err != nil {
-					bc.logger.Error("Websocket read failure, reconnecting in 5 seconds", "error", err)
 					conn.Close()
-					time.Sleep(5 * time.Second)
+
+					telemetry.WSConnectionDrops.Inc()
+
+					aliveDuration := time.Since(connectedAt)
+					if aliveDuration > 30*time.Second {
+						bc.logger.Info("Connection was stable for > 30s, resetting backoff retry delay", "duration", aliveDuration.String())
+						retryDelay = baseDelay
+					}
+
+					jitterVal := (rand.Float64() * 2.0 * jitterPercent) - jitterPercent
+					currentDelayWithJitter := time.Duration(float64(retryDelay) * (1.0 + jitterVal))
+					if currentDelayWithJitter > maxDelay {
+						currentDelayWithJitter = maxDelay
+					}
+
+					bc.logger.Error("Websocket read failure, reconnecting after backoff", "error", err, "backoff", currentDelayWithJitter.String())
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(currentDelayWithJitter):
+					}
+
+					retryDelay = time.Duration(float64(retryDelay) * factor)
+					if retryDelay > maxDelay {
+						retryDelay = maxDelay
+					}
 					break
 				}
 

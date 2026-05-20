@@ -205,3 +205,155 @@ func TestSQLiteOrderStorePersistence(t *testing.T) {
 		t.Errorf("expected 0 active orders after setting terminal state, got %d", len(orders))
 	}
 }
+
+func TestSQLiteOrderStoreMigrations(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_migrations.db")
+
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	// 1. Verify schema_migrations table contains the 3 migrations
+	var count int
+	err = store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 applied migrations, got %d", count)
+	}
+
+	// 2. Verify that orders table indeed contains commission and slippage columns
+	_, err = store.db.Exec("INSERT INTO orders (order_id, instrument, side, quantity, price, type, state, filled_qty, commission, slippage, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"mig-test-1", "BTC-USD", "BUY", 0.05, 50000.0, "LIMIT", "SUBMITTED", 0.0, 0.001, 0.002, time.Now(), time.Now())
+	if err != nil {
+		t.Errorf("failed to insert order with commission and slippage (migration test failed): %v", err)
+	}
+
+	var commission, slippage float64
+	err = store.db.QueryRow("SELECT commission, slippage FROM orders WHERE order_id = ?", "mig-test-1").Scan(&commission, &slippage)
+	if err != nil {
+		t.Fatalf("failed to select commission and slippage: %v", err)
+	}
+
+	if commission != 0.001 || slippage != 0.002 {
+		t.Errorf("expected commission 0.001 and slippage 0.002, got commission %f and slippage %f", commission, slippage)
+	}
+}
+
+func TestGatewayPreTradeRiskLimits(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_risk_limits.db")
+
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tracker := NewOrderTracker().WithStore(store)
+
+	// Create a gateway with:
+	// MaxOrderQtyBTC = 0.1
+	// MaxOrderQtyETH = 2.0
+	// MaxDailyOrders = 2
+	gw := NewGateway(nil, nil, nil, tracker, nil, 0.1, 2.0, 2, nil)
+
+	ctx := context.Background()
+
+	// Case 1: Valid BTC order (qty <= 0.1)
+	oValidBTC := exchange.Order{
+		OrderID:    "btc-valid",
+		Instrument: "BTC-USD",
+		Quantity:   0.05,
+	}
+	allowed, reason := gw.checkRiskLimits(ctx, oValidBTC)
+	if !allowed {
+		t.Errorf("expected valid BTC order to pass risk limits, got rejected with reason %s", reason)
+	}
+
+	// Case 2: Invalid BTC order (qty > 0.1)
+	oInvalidBTC := exchange.Order{
+		OrderID:    "btc-invalid",
+		Instrument: "BTC-USD",
+		Quantity:   0.15,
+	}
+	allowed, reason = gw.checkRiskLimits(ctx, oInvalidBTC)
+	if allowed {
+		t.Error("expected invalid BTC order to be rejected, but it passed risk limits")
+	}
+	if reason != "qty_limit_exceeded" {
+		t.Errorf("expected rejection reason 'qty_limit_exceeded', got %s", reason)
+	}
+
+	// Case 3: Valid ETH order (qty <= 2.0)
+	oValidETH := exchange.Order{
+		OrderID:    "eth-valid",
+		Instrument: "ETH-USD",
+		Quantity:   1.9,
+	}
+	allowed, reason = gw.checkRiskLimits(ctx, oValidETH)
+	if !allowed {
+		t.Errorf("expected valid ETH order to pass risk limits, got rejected with reason %s", reason)
+	}
+
+	// Case 4: Invalid ETH order (qty > 2.0)
+	oInvalidETH := exchange.Order{
+		OrderID:    "eth-invalid",
+		Instrument: "ETH-USD",
+		Quantity:   2.1,
+	}
+	allowed, reason = gw.checkRiskLimits(ctx, oInvalidETH)
+	if allowed {
+		t.Error("expected invalid ETH order to be rejected, but it passed risk limits")
+	}
+	if reason != "qty_limit_exceeded" {
+		t.Errorf("expected rejection reason 'qty_limit_exceeded', got %s", reason)
+	}
+
+	// Case 5: Daily frequency limit checks.
+	o1 := exchange.Order{
+		OrderID:    "o1",
+		Instrument: "BTC-USD",
+		Quantity:   0.01,
+	}
+	o2 := exchange.Order{
+		OrderID:    "o2",
+		Instrument: "BTC-USD",
+		Quantity:   0.01,
+	}
+	o3 := exchange.Order{
+		OrderID:    "o3",
+		Instrument: "BTC-USD",
+		Quantity:   0.01,
+	}
+
+	err = store.SaveOrder(ctx, o1, exchange.StateSubmitted)
+	if err != nil {
+		t.Fatalf("failed to save o1: %v", err)
+	}
+	err = store.SaveOrder(ctx, o2, exchange.StateSubmitted)
+	if err != nil {
+		t.Fatalf("failed to save o2: %v", err)
+	}
+
+	count, err := store.GetDailyOrderCount(ctx)
+	if err != nil {
+		t.Fatalf("failed to get daily count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected daily order count 2, got %d", count)
+	}
+
+	allowed, reason = gw.checkRiskLimits(ctx, o3)
+	if allowed {
+		t.Error("expected third order to be rejected due to frequency caps, but it passed")
+	}
+	if reason != "daily_count_exceeded" {
+		t.Errorf("expected rejection reason 'daily_count_exceeded', got %s", reason)
+	}
+}
+

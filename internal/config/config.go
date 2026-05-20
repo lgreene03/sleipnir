@@ -20,6 +20,10 @@ type Config struct {
 
 	RateLimitRPS float64 `envconfig:"RATE_LIMIT_RPS" default:"10.0"`
 	Port         string  `envconfig:"PORT" default:"8080"`
+
+	MaxOrderQtyBTC float64 `envconfig:"MAX_ORDER_QTY_BTC" default:"0.1"`
+	MaxOrderQtyETH float64 `envconfig:"MAX_ORDER_QTY_ETH" default:"2.0"`
+	MaxDailyOrders int     `envconfig:"MAX_DAILY_ORDERS" default:"500"`
 }
 
 // LoadConfig reads configuration from the environment and validates required fields.

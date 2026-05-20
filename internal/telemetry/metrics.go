@@ -49,6 +49,23 @@ var (
 		},
 		[]string{"topic", "operation", "status"},
 	)
+
+	// WSConnectionDrops tracks total exchange WebSocket connection drops.
+	WSConnectionDrops = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "sleipnir_ws_connection_drops_total",
+			Help: "Total number of live exchange WebSocket user stream connection drops.",
+		},
+	)
+
+	// RiskRejections tracks total pre-trade risk failures.
+	RiskRejections = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sleipnir_risk_rejections_total",
+			Help: "Total number of orders rejected by pre-trade risk filters.",
+		},
+		[]string{"instrument", "reason"},
+	)
 )
 
 func init() {
@@ -57,4 +74,6 @@ func init() {
 	prometheus.MustRegister(OrderLatency)
 	prometheus.MustRegister(RateLimitDelay)
 	prometheus.MustRegister(KafkaMessagesProcessed)
+	prometheus.MustRegister(WSConnectionDrops)
+	prometheus.MustRegister(RiskRejections)
 }

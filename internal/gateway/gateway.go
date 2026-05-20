@@ -22,6 +22,10 @@ type Gateway struct {
 	limiter   *TokenBucketLimiter
 	logger    *slog.Logger
 	fillChan  chan exchange.ExecutionFill
+
+	maxOrderQtyBTC float64
+	maxOrderQtyETH float64
+	maxDailyOrders int
 }
 
 // NewGateway creates a new core Gateway.
@@ -31,19 +35,25 @@ func NewGateway(
 	connector exchange.ExchangeConnector,
 	tracker *OrderTracker,
 	limiter *TokenBucketLimiter,
+	maxOrderQtyBTC float64,
+	maxOrderQtyETH float64,
+	maxDailyOrders int,
 	logger *slog.Logger,
 ) *Gateway {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Gateway{
-		consumer:  consumer,
-		producer:  producer,
-		connector: connector,
-		tracker:   tracker,
-		limiter:   limiter,
-		logger:    logger.With("module", "gateway"),
-		fillChan:  make(chan exchange.ExecutionFill, 1000),
+		consumer:       consumer,
+		producer:       producer,
+		connector:      connector,
+		tracker:        tracker,
+		limiter:        limiter,
+		logger:         logger.With("module", "gateway"),
+		fillChan:       make(chan exchange.ExecutionFill, 1000),
+		maxOrderQtyBTC: maxOrderQtyBTC,
+		maxOrderQtyETH: maxOrderQtyETH,
+		maxDailyOrders: maxDailyOrders,
 	}
 }
 
@@ -114,6 +124,28 @@ func (gw *Gateway) Start(ctx context.Context) error {
 
 			gw.logger.Info("Ingested new execution intent", "orderID", intent.OrderID, "instrument", intent.Instrument, "qty", intent.Quantity, "side", intent.Side)
 
+			// Pre-trade risk limit validation checks
+			if allowed, reason := gw.checkRiskLimits(ctx, intent); !allowed {
+				gw.logger.Error("Pre-trade risk limit check failed. Rejecting order.",
+					"orderID", intent.OrderID,
+					"instrument", intent.Instrument,
+					"qty", intent.Quantity,
+					"reason", reason,
+				)
+
+				// Increment telemetry risk rejections count
+				telemetry.RiskRejections.WithLabelValues(intent.Instrument, reason).Inc()
+
+				// Commit state in memory and database stores as REJECTED
+				gw.tracker.AddOrder(intent, exchange.StateRejected)
+
+				// Commit Kafka offset to acknowledge message consumption
+				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
+					gw.logger.Error("Failed to commit offset after risk rejection", "orderID", intent.OrderID, "error", commitErr)
+				}
+				continue
+			}
+
 			// Throttling outbound submissions with Token Bucket rate limiter
 			if err := gw.limiter.Wait(ctx); err != nil {
 				gw.logger.Error("Rate limiter wait cancelled", "error", err)
@@ -166,4 +198,33 @@ func (gw *Gateway) Start(ctx context.Context) error {
 
 	wg.Wait()
 	return nil
+}
+
+// checkRiskLimits validates if the intent complies with pre-trade risk thresholds.
+func (gw *Gateway) checkRiskLimits(ctx context.Context, intent exchange.Order) (bool, string) {
+	// Size limit checks
+	if intent.Instrument == "BTC-USD" || intent.Instrument == "BTCUSDT" {
+		if intent.Quantity > gw.maxOrderQtyBTC {
+			return false, "qty_limit_exceeded"
+		}
+	} else if intent.Instrument == "ETH-USD" || intent.Instrument == "ETHUSDT" {
+		if intent.Quantity > gw.maxOrderQtyETH {
+			return false, "qty_limit_exceeded"
+		}
+	}
+
+	// Daily count limit check
+	if gw.tracker.store != nil {
+		count, err := gw.tracker.store.GetDailyOrderCount(ctx)
+		if err != nil {
+			gw.logger.Error("Failed to check daily order count from store for risk limits", "error", err)
+			// Fail-safe by rejecting order if database is unreachable
+			return false, "db_unreachable"
+		}
+		if count >= gw.maxDailyOrders {
+			return false, "daily_count_exceeded"
+		}
+	}
+
+	return true, ""
 }

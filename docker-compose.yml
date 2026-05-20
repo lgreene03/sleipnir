@@ -83,6 +83,7 @@ services:
       - "9095:9090"
     volumes:
       - ./telemetry/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./telemetry/alerts.yml:/etc/prometheus/alerts.yml
     depends_on:
       - sleipnir
 

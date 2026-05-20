@@ -18,6 +18,7 @@ type OrderStore interface {
 	SaveOrder(ctx context.Context, order exchange.Order, state exchange.OrderState) error
 	UpdateOrderState(ctx context.Context, orderID string, state exchange.OrderState, filledQty float64) error
 	GetActiveOrders(ctx context.Context) ([]exchange.Order, map[string]exchange.OrderState, map[string]float64, error)
+	GetDailyOrderCount(ctx context.Context) (int, error)
 }
 
 // SQLiteOrderStore implements OrderStore using SQLite (CGO-free).
@@ -25,7 +26,84 @@ type SQLiteOrderStore struct {
 	db *sql.DB
 }
 
-// NewSQLiteOrderStore creates a new SQLite-backed order store.
+type dbMigration struct {
+	version int
+	query   string
+}
+
+var dbMigrations = []dbMigration{
+	{
+		version: 1,
+		query: `
+		CREATE TABLE IF NOT EXISTS orders (
+			order_id TEXT PRIMARY KEY,
+			instrument TEXT NOT NULL,
+			side TEXT NOT NULL,
+			quantity REAL NOT NULL,
+			price REAL NOT NULL,
+			type TEXT NOT NULL,
+			state TEXT NOT NULL,
+			filled_qty REAL NOT NULL DEFAULT 0.0,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		);`,
+	},
+	{
+		version: 2,
+		query: `
+		ALTER TABLE orders ADD COLUMN commission REAL NOT NULL DEFAULT 0.0;`,
+	},
+	{
+		version: 3,
+		query: `
+		ALTER TABLE orders ADD COLUMN slippage REAL NOT NULL DEFAULT 0.0;`,
+	},
+}
+
+// runMigrations executes outstanding database migrations transactionally.
+func runMigrations(db *sql.DB) error {
+	_, err := db.Exec(`
+	CREATE TABLE IF NOT EXISTS schema_migrations (
+		version INTEGER PRIMARY KEY,
+		applied_at DATETIME NOT NULL
+	);`)
+	if err != nil {
+		return fmt.Errorf("failed to create schema_migrations table: %w", err)
+	}
+
+	for _, m := range dbMigrations {
+		var exists bool
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)", m.version).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check migration version %d: %w", m.version, err)
+		}
+
+		if !exists {
+			tx, err := db.Begin()
+			if err != nil {
+				return fmt.Errorf("failed to start migration transaction: %w", err)
+			}
+
+			if _, err := tx.Exec(m.query); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to execute migration v%d: %w", m.version, err)
+			}
+
+			_, err = tx.Exec("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", m.version, time.Now())
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to record migration v%d: %w", m.version, err)
+			}
+
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("failed to commit migration v%d: %w", m.version, err)
+			}
+		}
+	}
+	return nil
+}
+
+// NewSQLiteOrderStore creates a new SQLite-backed order store and runs migrations.
 func NewSQLiteOrderStore(dbPath string) (*SQLiteOrderStore, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(dbPath)
@@ -38,23 +116,10 @@ func NewSQLiteOrderStore(dbPath string) (*SQLiteOrderStore, error) {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	// Create table schema
-	query := `
-	CREATE TABLE IF NOT EXISTS orders (
-		order_id TEXT PRIMARY KEY,
-		instrument TEXT NOT NULL,
-		side TEXT NOT NULL,
-		quantity REAL NOT NULL,
-		price REAL NOT NULL,
-		type TEXT NOT NULL,
-		state TEXT NOT NULL,
-		filled_qty REAL NOT NULL DEFAULT 0.0,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL
-	);`
-	if _, err := db.Exec(query); err != nil {
+	// Execute migrations
+	if err := runMigrations(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to create orders table: %w", err)
+		return nil, err
 	}
 
 	return &SQLiteOrderStore{db: db}, nil
@@ -151,4 +216,18 @@ func (s *SQLiteOrderStore) GetActiveOrders(ctx context.Context) ([]exchange.Orde
 	}
 
 	return orders, states, filledQtys, nil
+}
+
+// GetDailyOrderCount returns the count of orders submitted since today's midnight.
+func (s *SQLiteOrderStore) GetDailyOrderCount(ctx context.Context) (int, error) {
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	query := `SELECT COUNT(*) FROM orders WHERE created_at >= ?;`
+	var count int
+	err := s.db.QueryRowContext(ctx, query, startOfToday).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count daily orders: %w", err)
+	}
+	return count, nil
 }

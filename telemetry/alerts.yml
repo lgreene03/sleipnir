@@ -1,0 +1,29 @@
+groups:
+  - name: sleipnir_alerts
+    rules:
+      - alert: HighRESTLatency
+        expr: histogram_quantile(0.95, sum(rate(sleipnir_order_latency_seconds_bucket[5m])) by (le)) > 1.5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High REST API latency detected"
+          description: "The 95th percentile REST API latency is {{ $value }}s, which exceeds the threshold of 1.5s."
+
+      - alert: WebsocketDisconnectSpike
+        expr: increase(sleipnir_ws_connection_drops_total[5m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket disconnection spike detected"
+          description: "WebSocket user data stream disconnected {{ $value }} times within the last 5 minutes."
+
+      - alert: RiskLimitsViolationSpike
+        expr: sum(increase(sleipnir_risk_rejections_total[5m])) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pre-trade risk limits violation spike detected"
+          description: "More than 5 orders ({{ $value }} orders) were rejected by pre-trade risk checks within 5 minutes."

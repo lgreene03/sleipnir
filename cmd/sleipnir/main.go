@@ -152,6 +152,9 @@ func main() {
 		connector,
 		tracker,
 		limiter,
+		cfg.MaxOrderQtyBTC,
+		cfg.MaxOrderQtyETH,
+		cfg.MaxDailyOrders,
 		logger,
 	)
 
