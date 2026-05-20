@@ -1,0 +1,118 @@
+# Sleipnir — Order Execution Gateway
+
+> *Named after Odin's eight-legged steed, who carries riders across worlds.*
+> Sleipnir carries order intents from [Huginn](https://github.com/lgreene03/huginn) to the exchange, and fills back.
+
+Sleipnir is the **execution layer** of the four-service Norse stack:
+
+| Service | Role | Repo |
+|---|---|---|
+| [muninn](https://github.com/lgreene03/muninn) | Deterministic feature engine (Java/Spring Boot) | server-side compute |
+| [muninn-py](https://github.com/lgreene03/muninn-py) | Research SDK + CLI (Python) | client library |
+| [huginn](https://github.com/lgreene03/huginn) | Strategy execution engine (Go) | reads features, emits intents |
+| **sleipnir** (this repo) | Order execution gateway (Go) | submits intents, reports fills |
+
+```
+huginn  ──▶  executions.intents.v1  ──▶  sleipnir  ──▶  Binance Spot
+                                            │
+                                            ▼
+huginn  ◀──  executions.fills.v1    ◀── sleipnir
+```
+
+## What Sleipnir does
+
+- Consumes order intents from Kafka topic `executions.intents.v1`
+- Runs pre-trade size + rate-limit + daily-count checks
+- Signs and submits REST orders to Binance Spot (testnet by default)
+- Listens on the Binance User Data WebSocket API for fill events
+- Republishes verified `ExecutionFill` events on `executions.fills.v1`
+- Persists order lifecycle to SQLite, reconciles missed fills on boot
+- Exposes Prometheus metrics + an alert ruleset + a Grafana dashboard
+
+See **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** for the diagram and the boot-reconciliation path.
+
+## What Sleipnir is not
+
+See **[`docs/ROADMAP.md`](docs/ROADMAP.md)** for the full non-goals list. Headlines:
+
+- **Not a strategy engine.** Sleipnir does not decide what to trade. Huginn does.
+- **Not a portfolio tracker.** Huginn owns positions and PnL.
+- **Not a market data feed.** Muninn handles features. Sleipnir handles execution.
+- **Not multi-venue.** One Sleipnir, one venue. Multi-venue is Phase F / deferred.
+- **Not a smart order router.** No iceberg / VWAP / TWAP algos.
+- **Not mainnet.** Sleipnir is a research artifact. Testnet only.
+
+## Quick start
+
+```bash
+# Set Binance Spot Testnet credentials (https://testnet.binance.vision)
+export BINANCE_API_KEY=...
+export BINANCE_API_SECRET=...
+
+# Bring up sleipnir + Redpanda + mocks + Prometheus + Grafana
+docker compose up -d
+
+# Watch the gateway logs
+docker compose logs -f sleipnir
+
+# Health
+curl http://localhost:8085/healthz
+
+# Prometheus
+open http://localhost:9095
+
+# Grafana (anonymous Admin)
+open http://localhost:3005
+```
+
+> ⚠️ **Do not commit `.env`.** See **[`SECURITY.md`](SECURITY.md)**. The `.dockerignore` excludes it from build context, but it must not enter the repo at any layer.
+
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated broker list |
+| `KAFKA_INTENTS_TOPIC` | `executions.intents.v1` | Inbound order intents |
+| `KAFKA_FILLS_TOPIC` | `executions.fills.v1` | Outbound fill reports |
+| `KAFKA_CONSUMER_GROUP` | `sleipnir-gateway` | Consumer group |
+| `BINANCE_API_KEY` / `BINANCE_API_SECRET` | _(required)_ | Spot Testnet credentials |
+| `BINANCE_REST_URL` | `https://testnet.binance.vision` | Testnet REST host |
+| `BINANCE_WS_URL` | `wss://ws-api.testnet.binance.vision/ws-api/v3` | Testnet WS host |
+| `RATE_LIMIT_RPS` | `10.0` | Token-bucket request budget |
+| `MAX_ORDER_QTY_BTC` | `0.1` | Per-order size cap for BTC |
+| `MAX_ORDER_QTY_ETH` | `2.0` | Per-order size cap for ETH |
+| `MAX_DAILY_ORDERS` | `500` | Daily count cap |
+| `PORT` | `8080` | Health + metrics port |
+| `DB_PATH` | `/app/data/sleipnir.db` | SQLite store path |
+
+> The hardcoded BTC/ETH per-instrument caps are a known limitation. Any non-BTC/ETH instrument falls through with no size cap — see [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) finding **C3**. Phase 5/6 replaces this with a config-driven `risk.yaml`.
+
+## Topic contracts
+
+Frozen wire definitions live in **[`docs/CONTRACTS.md`](docs/CONTRACTS.md)**. The contract is shared with huginn (`huginn/internal/kafka/{producer.go,fills_consumer.go}`); changes are a coordinated cross-repo PR pair.
+
+## Development
+
+```bash
+make build          # build all binaries
+make test           # go test -race -cover
+make lint           # golangci-lint
+make compose-up     # docker compose up -d
+make compose-down   # docker compose down -v
+```
+
+CI lives in `.github/workflows/ci.yml` (added in Phase 2 of the roadmap).
+
+## Project documents
+
+- **[`docs/ROADMAP.md`](docs/ROADMAP.md)** — phased plan, exit criteria, non-goals
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — single-page service diagram + boot reconciliation path
+- **[`docs/CONTRACTS.md`](docs/CONTRACTS.md)** — Kafka wire contracts, cross-linked to huginn
+- **[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)** — focused security review (May 2026)
+- **[`SECURITY.md`](SECURITY.md)** — how to report a vulnerability, secret-handling rules
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — branching, commit style, review expectations
+- **[`LICENSE`](LICENSE)** — Apache 2.0
+
+## License
+
+Apache 2.0. See [`LICENSE`](LICENSE).

@@ -65,7 +65,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 1 — Project foundations
+## Phase 1 — Project foundations ✅
 
 **Goal.** Give sleipnir the same baseline governance every other service in the stack has.
 

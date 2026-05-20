@@ -1,0 +1,58 @@
+# golangci-lint configuration for sleipnir.
+# Tuned to the existing codebase: strict enough to catch real bugs,
+# permissive on the stylistic dimensions that don't matter at this scale.
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - bodyclose       # response.Body.Close on every HTTP call (matters in internal/exchange)
+    - contextcheck    # context propagation
+    - errcheck        # unhandled error returns
+    - errorlint       # %w vs %v, errors.Is/As correctness
+    - gofumpt         # stricter gofmt
+    - gosec           # security findings (HMAC, secrets, weak crypto)
+    - govet           # standard vet rules
+    - ineffassign     # unused assignments
+    - misspell        # spelling
+    - revive          # general lint
+    - staticcheck     # the big one
+    - unconvert       # redundant type conversions
+    - unused          # unused symbols
+    - whitespace      # leading/trailing blank lines in func bodies
+
+linters-settings:
+  gosec:
+    # G104 (errors not checked) is covered by errcheck; G115 (integer overflow conversion)
+    # is too noisy for our risk-calc code where the cast is intentional.
+    excludes:
+      - G104
+      - G115
+    # Pay particular attention to credential paths.
+    config:
+      G101:
+        pattern: '(?i)(api[_-]?key|api[_-]?secret|token|password)'
+  errcheck:
+    check-blank: true
+    check-type-assertions: true
+  revive:
+    rules:
+      - name: exported
+        disabled: true   # docstrings are nice-to-have, not a blocker
+
+issues:
+  exclude-rules:
+    # Test files: allow looser error handling.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+    # Mock binaries: allow log.Fatal idiom.
+    - path: cmd/mock_(huginn|muninn)/
+      linters:
+        - revive
+  max-issues-per-linter: 0
+  max-same-issues: 0
