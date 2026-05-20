@@ -30,10 +30,10 @@ type Gateway struct {
 	logger    *slog.Logger
 	fillChan  chan exchange.ExecutionFill
 
-	maxDailyOrders  int
-	maxDailyBuys    int // 0 = no per-side cap
-	maxDailySells   int // 0 = no per-side cap
-	ready           atomic.Bool // flipped true once we've consumed our first message
+	maxDailyOrders int
+	maxDailyBuys   int         // 0 = no per-side cap
+	maxDailySells  int         // 0 = no per-side cap
+	ready          atomic.Bool // flipped true once we've consumed our first message
 }
 
 // NewGateway creates a new core Gateway.
