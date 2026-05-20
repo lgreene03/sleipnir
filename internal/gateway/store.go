@@ -17,8 +17,10 @@ import (
 type OrderStore interface {
 	SaveOrder(ctx context.Context, order exchange.Order, state exchange.OrderState) error
 	UpdateOrderState(ctx context.Context, orderID string, state exchange.OrderState, filledQty float64) error
+	RecordFillCosts(ctx context.Context, orderID string, commission, slippage float64) error
 	GetActiveOrders(ctx context.Context) ([]exchange.Order, map[string]exchange.OrderState, map[string]float64, error)
 	GetDailyOrderCount(ctx context.Context) (int, error)
+	GetDailyOrderCountBySide(ctx context.Context, side exchange.OrderSide) (int, error)
 }
 
 // SQLiteOrderStore implements OrderStore using SQLite (CGO-free).
@@ -230,4 +232,32 @@ func (s *SQLiteOrderStore) GetDailyOrderCount(ctx context.Context) (int, error) 
 		return 0, fmt.Errorf("failed to count daily orders: %w", err)
 	}
 	return count, nil
+}
+
+// GetDailyOrderCountBySide returns the count of today's orders filtered by side (BUY or SELL).
+func (s *SQLiteOrderStore) GetDailyOrderCountBySide(ctx context.Context, side exchange.OrderSide) (int, error) {
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	query := `SELECT COUNT(*) FROM orders WHERE side = ? AND created_at >= ?;`
+	var count int
+	err := s.db.QueryRowContext(ctx, query, string(side), startOfToday).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count daily %s orders: %w", side, err)
+	}
+	return count, nil
+}
+
+// RecordFillCosts writes the commission (exchange fee) and slippage (signed price
+// deviation from the intended price, in raw quote currency) to the orders row.
+// Both values come from the exchange fill: commission is TransactionCost;
+// slippage is fill_price − intent_price (positive = filled above intent for a buy,
+// negative = filled below intent for a sell — sign carries direction).
+func (s *SQLiteOrderStore) RecordFillCosts(ctx context.Context, orderID string, commission, slippage float64) error {
+	query := `UPDATE orders SET commission = ?, slippage = ?, updated_at = ? WHERE order_id = ?;`
+	_, err := s.db.ExecContext(ctx, query, commission, slippage, time.Now(), orderID)
+	if err != nil {
+		return fmt.Errorf("failed to record fill costs for order %s: %w", orderID, err)
+	}
+	return nil
 }

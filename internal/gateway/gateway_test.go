@@ -357,3 +357,167 @@ func TestGatewayPreTradeRiskLimits(t *testing.T) {
 		t.Errorf("expected rejection reason 'daily_count_exceeded', got %s", reason)
 	}
 }
+
+// TestRecordFillCosts verifies that commission and slippage are persisted and
+// survive a read-back via GetActiveOrders (which is the only store round-trip
+// exercised without a full Binance connection).
+func TestRecordFillCosts(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "fillcosts.db")
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	order := exchange.Order{
+		OrderID:    "fill-cost-order",
+		Instrument: "BTC-USD",
+		Side:       exchange.SideBuy,
+		Quantity:   0.01,
+		Price:      50_000.0,
+		Type:       exchange.TypeLimit,
+	}
+	if err := store.SaveOrder(ctx, order, exchange.StateSubmitted); err != nil {
+		t.Fatalf("save order: %v", err)
+	}
+
+	commission := 1.25
+	slippage := 10.0 // fill at 50_010 on a 50_000 limit
+	if err := store.RecordFillCosts(ctx, order.OrderID, commission, slippage); err != nil {
+		t.Fatalf("record fill costs: %v", err)
+	}
+
+	// Verify via direct query — we don't expose commission/slippage in
+	// GetActiveOrders (they're research columns, not lifecycle state), so we
+	// reach into the DB directly here.
+	var gotCommission, gotSlippage float64
+	row := store.db.QueryRowContext(ctx, `SELECT commission, slippage FROM orders WHERE order_id = ?`, order.OrderID)
+	if err := row.Scan(&gotCommission, &gotSlippage); err != nil {
+		t.Fatalf("scan fill costs: %v", err)
+	}
+	if gotCommission != commission {
+		t.Errorf("commission = %f, want %f", gotCommission, commission)
+	}
+	if gotSlippage != slippage {
+		t.Errorf("slippage = %f, want %f", gotSlippage, slippage)
+	}
+}
+
+// TestGetDailyOrderCountBySide verifies that per-side counts are tracked
+// independently and that the combined total still works.
+func TestGetDailyOrderCountBySide(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "sidecounts.db")
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	saveSide := func(id string, side exchange.OrderSide) {
+		t.Helper()
+		o := exchange.Order{
+			OrderID:    id,
+			Instrument: "BTC-USD",
+			Side:       side,
+			Quantity:   0.01,
+			Price:      50_000,
+			Type:       exchange.TypeLimit,
+		}
+		if err := store.SaveOrder(ctx, o, exchange.StateSubmitted); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	saveSide("b1", exchange.SideBuy)
+	saveSide("b2", exchange.SideBuy)
+	saveSide("s1", exchange.SideSell)
+
+	buyCount, err := store.GetDailyOrderCountBySide(ctx, exchange.SideBuy)
+	if err != nil {
+		t.Fatalf("GetDailyOrderCountBySide BUY: %v", err)
+	}
+	if buyCount != 2 {
+		t.Errorf("buy count = %d, want 2", buyCount)
+	}
+
+	sellCount, err := store.GetDailyOrderCountBySide(ctx, exchange.SideSell)
+	if err != nil {
+		t.Fatalf("GetDailyOrderCountBySide SELL: %v", err)
+	}
+	if sellCount != 1 {
+		t.Errorf("sell count = %d, want 1", sellCount)
+	}
+
+	total, err := store.GetDailyOrderCount(ctx)
+	if err != nil {
+		t.Fatalf("GetDailyOrderCount: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total count = %d, want 3", total)
+	}
+}
+
+// TestDailySideLimitRejection verifies that per-side caps (MAX_DAILY_BUYS /
+// MAX_DAILY_SELLS) reject intents once the side quota is exhausted, while the
+// opposite side's intents are still accepted.
+func TestDailySideLimitRejection(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "sidelimit.db")
+	store, err := NewSQLiteOrderStore(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	riskPolicy := NewLegacyRiskPolicy(1.0, 1.0)
+	gw := NewGateway(nil, nil, nil,
+		NewOrderTracker().WithStore(store),
+		NewTokenBucketLimiter(100),
+		riskPolicy, NewHalt(),
+		100,
+		nil,
+	).WithDailySideLimits(1, 100) // max 1 buy per day, 100 sells
+
+	buyOrder := exchange.Order{
+		OrderID:    "buy-1",
+		Instrument: "BTC-USD",
+		Side:       exchange.SideBuy,
+		Quantity:   0.01,
+		Price:      50_000,
+		Type:       exchange.TypeLimit,
+	}
+	// First buy should pass.
+	if err := store.SaveOrder(ctx, buyOrder, exchange.StateSubmitted); err != nil {
+		t.Fatalf("save buy-1: %v", err)
+	}
+
+	// Second buy must be rejected.
+	buy2 := buyOrder
+	buy2.OrderID = "buy-2"
+	allowed, reason := gw.checkRiskLimits(ctx, buy2)
+	if allowed {
+		t.Error("second buy should be rejected by per-side cap, but passed")
+	}
+	if reason != "daily_buy_count_exceeded" {
+		t.Errorf("reason = %q, want daily_buy_count_exceeded", reason)
+	}
+
+	// A sell should still be accepted.
+	sellOrder := exchange.Order{
+		OrderID:    "sell-1",
+		Instrument: "BTC-USD",
+		Side:       exchange.SideSell,
+		Quantity:   0.01,
+		Price:      50_000,
+		Type:       exchange.TypeLimit,
+	}
+	allowed, reason = gw.checkRiskLimits(ctx, sellOrder)
+	if !allowed {
+		t.Errorf("sell should pass per-side check, got rejected: %s", reason)
+	}
+}

@@ -28,6 +28,9 @@ type Config struct {
 	MaxOrderQtyBTC float64 `envconfig:"MAX_ORDER_QTY_BTC" default:"0.1"`
 	MaxOrderQtyETH float64 `envconfig:"MAX_ORDER_QTY_ETH" default:"2.0"`
 	MaxDailyOrders int     `envconfig:"MAX_DAILY_ORDERS" default:"500"`
+	// Per-side caps enforced on top of MAX_DAILY_ORDERS. Zero means no per-side cap.
+	MaxDailyBuys  int `envconfig:"MAX_DAILY_BUYS" default:"0"`
+	MaxDailySells int `envconfig:"MAX_DAILY_SELLS" default:"0"`
 }
 
 // LoadConfig reads configuration from the environment and validates required fields.

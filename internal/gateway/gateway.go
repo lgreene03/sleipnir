@@ -30,8 +30,10 @@ type Gateway struct {
 	logger    *slog.Logger
 	fillChan  chan exchange.ExecutionFill
 
-	maxDailyOrders int
-	ready          atomic.Bool // flipped true once we've consumed our first message
+	maxDailyOrders  int
+	maxDailyBuys    int // 0 = no per-side cap
+	maxDailySells   int // 0 = no per-side cap
+	ready           atomic.Bool // flipped true once we've consumed our first message
 }
 
 // NewGateway creates a new core Gateway.
@@ -72,6 +74,15 @@ func (gw *Gateway) Halt() *Halt { return gw.halt }
 // IsReady reports whether the gateway has consumed at least one intent
 // successfully. /readyz uses this.
 func (gw *Gateway) IsReady() bool { return gw.ready.Load() }
+
+// WithDailySideLimits configures the per-side daily order caps. Zero on either
+// side means no cap for that side (the combined maxDailyOrders still applies).
+// Loaded from MAX_DAILY_BUYS / MAX_DAILY_SELLS env vars in main.go.
+func (gw *Gateway) WithDailySideLimits(maxBuys, maxSells int) *Gateway {
+	gw.maxDailyBuys = maxBuys
+	gw.maxDailySells = maxSells
+	return gw
+}
 
 // Start launches the background loops of the gateway and blocks until the context is canceled.
 func (gw *Gateway) Start(ctx context.Context) error {
@@ -121,6 +132,20 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					targetState = exchange.StateFilled
 				}
 				gw.tracker.UpdateOrderStateAndQty(fill.OrderID, targetState, fill.Quantity)
+
+				// Persist commission and slippage so downstream research can
+				// reconstruct realized transaction costs per order. Slippage is
+				// (fill_price − intent_price): positive on a buy means filled
+				// above the limit; negative means better-than-limit execution.
+				if gw.tracker.store != nil {
+					slippage := fill.FillPrice
+					if intent, ok := gw.tracker.GetOrder(fill.OrderID); ok {
+						slippage = fill.FillPrice - intent.Price
+					}
+					if costErr := gw.tracker.store.RecordFillCosts(ctx, fill.OrderID, fill.TransactionCost, slippage); costErr != nil {
+						gw.logger.Warn("Failed to persist fill costs", "orderID", fill.OrderID, "error", costErr)
+					}
+				}
 
 				// Broadcast fill back to the downstream tracking layer (Kafka)
 				if err := gw.producer.PublishFill(ctx, fill); err != nil {
@@ -229,6 +254,15 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				telemetry.OrdersFilled.WithLabelValues(fill.Instrument, string(fill.Side)).Inc()
 
 				gw.tracker.UpdateOrderState(fill.OrderID, exchange.StateFilled)
+
+				// Record commission and slippage for the immediately-returned fill.
+				if gw.tracker.store != nil {
+					slippage := fill.FillPrice - intent.Price
+					if costErr := gw.tracker.store.RecordFillCosts(ctx, fill.OrderID, fill.TransactionCost, slippage); costErr != nil {
+						gw.logger.Warn("Failed to persist immediate fill costs", "orderID", fill.OrderID, "error", costErr)
+					}
+				}
+
 				if prodErr := gw.producer.PublishFill(ctx, fill); prodErr != nil {
 					gw.logger.Error("Failed to broadcast immediate execution fill", "orderID", fill.OrderID, "error", prodErr)
 				}
@@ -264,6 +298,28 @@ func (gw *Gateway) checkRiskLimits(ctx context.Context, intent exchange.Order) (
 		}
 		if count >= gw.maxDailyOrders {
 			return false, "daily_count_exceeded"
+		}
+
+		// Per-side daily caps (Phase 6). A zero cap means "no limit for this side".
+		if intent.Side == exchange.SideBuy && gw.maxDailyBuys > 0 {
+			buyCount, err := gw.tracker.store.GetDailyOrderCountBySide(ctx, exchange.SideBuy)
+			if err != nil {
+				gw.logger.Error("Failed to check daily buy count", "error", err)
+				return false, "db_unreachable"
+			}
+			if buyCount >= gw.maxDailyBuys {
+				return false, "daily_buy_count_exceeded"
+			}
+		}
+		if intent.Side == exchange.SideSell && gw.maxDailySells > 0 {
+			sellCount, err := gw.tracker.store.GetDailyOrderCountBySide(ctx, exchange.SideSell)
+			if err != nil {
+				gw.logger.Error("Failed to check daily sell count", "error", err)
+				return false, "db_unreachable"
+			}
+			if sellCount >= gw.maxDailySells {
+				return false, "daily_sell_count_exceeded"
+			}
 		}
 	}
 

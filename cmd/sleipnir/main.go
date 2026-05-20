@@ -203,7 +203,7 @@ func main() {
 		halt,
 		cfg.MaxDailyOrders,
 		logger,
-	)
+	).WithDailySideLimits(cfg.MaxDailyBuys, cfg.MaxDailySells)
 
 	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{

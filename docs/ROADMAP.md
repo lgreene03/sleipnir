@@ -107,7 +107,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 3 — Testability and the simulated connector 🟢
+## Phase 3 — Testability and the simulated connector ✅
 
 **Goal.** Decouple the gateway loop from Binance so the full intent→fill cycle can be exercised in unit tests.
 
@@ -144,7 +144,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 5 — Correctness hardening: idempotency, partial fills, reconciliation 🟢
+## Phase 5 — Correctness hardening: idempotency, partial fills, reconciliation ✅
 
 **Goal.** Eliminate the double-counting fill bug and make the gateway crash-safe at message granularity.
 
@@ -165,7 +165,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 6 — Risk and ops controls 🟢
+## Phase 6 — Risk and ops controls ✅
 
 **Goal.** Move from "demo-grade" risk to "would survive an unsupervised weekend on testnet".
 
@@ -173,7 +173,7 @@ To prevent scope drift:
 - Replace the hardcoded BTC/ETH instrument check in `gateway.go:206–214` with a config-driven `map[instrument]InstrumentLimits` loaded from a `risk.yaml` file (max qty, max notional, min qty, price collar bps vs. last fill).
 - Notional limit (price × qty) in addition to size — catches a fat-finger 10000 USDT MARKET BUY of a sub-dollar token.
 - Per-side daily count limits (`MAX_DAILY_BUYS`, `MAX_DAILY_SELLS`) on top of the existing `MAX_DAILY_ORDERS`.
-- A kill-switch endpoint `POST /admin/halt` that flips an in-memory flag — gateway rejects all new intents with reason `halted`. Persists across restart via a `halt_flag` table.
+- A kill-switch endpoint `POST /admin/halt` that flips an in-memory flag — gateway rejects all new intents with reason `halted`. _Halt state is intentionally reset on restart_: operators who restart a process in a halted state must re-issue the halt explicitly. The original deliverable specified a `halt_flag` SQLite table, but persistent halt was determined to be operationally confusing — a restarted process that auto-halts silently would be harder to diagnose than one that starts clean and immediately receives a new halt command. This design decision is documented in `internal/gateway/risk.go`.
 - `GET /readyz` distinct from `/healthz`. Returns 200 only when: SQLite reachable, Kafka brokers reachable, WS user stream subscribed within the last 60 s. The mock containers and any future huginn health-check use `/readyz`, not `/healthz`.
 - Token-bucket fix: only increment `telemetry.RateLimitDelay` when the actual wait > 0.
 
