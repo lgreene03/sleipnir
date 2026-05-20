@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_huginn ./cmd/mock
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_muninn ./cmd/mock_muninn
 
 # Stage 2: Final runner environment
-FROM alpine:3.20
+FROM alpine:3.23
 
 # Install SSL certificates and timezone databases
 RUN apk --no-cache add ca-certificates tzdata
