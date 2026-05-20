@@ -52,7 +52,9 @@ func LoadRiskPolicy(path string) (*RiskPolicy, error) {
 	if path == "" {
 		return nil, nil
 	}
-	data, err := os.ReadFile(path)
+	// Path is operator-controlled via RISK_CONFIG_PATH env var; not a user
+	// input source. gosec's G304 generic "tainted-path" lint doesn't apply.
+	data, err := os.ReadFile(path) //nolint:gosec // operator-supplied config path
 	if err != nil {
 		return nil, fmt.Errorf("risk config %s: %w", path, err)
 	}
@@ -84,10 +86,10 @@ func NewLegacyRiskPolicy(maxBTC, maxETH float64) *RiskPolicy {
 		DefaultMaxQty:      0,
 		DefaultMaxNotional: 0,
 		Instruments: map[string]InstrumentLimits{
-			"BTC-USD":  {MaxQty: maxBTC},
-			"BTCUSDT":  {MaxQty: maxBTC},
-			"ETH-USD":  {MaxQty: maxETH},
-			"ETHUSDT":  {MaxQty: maxETH},
+			"BTC-USD": {MaxQty: maxBTC},
+			"BTCUSDT": {MaxQty: maxBTC},
+			"ETH-USD": {MaxQty: maxETH},
+			"ETHUSDT": {MaxQty: maxETH},
 		},
 	}
 }
@@ -182,4 +184,3 @@ func (h *Halt) Reason() string {
 	defer h.mu.RUnlock()
 	return h.reason
 }
-

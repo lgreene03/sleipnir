@@ -71,7 +71,7 @@ type ExecutionFill struct {
 	ExecutionID     string     `json:"execution_id"`
 	Instrument      string     `json:"instrument"`
 	Side            OrderSide  `json:"side"`
-	OrderStatus     OrderState `json:"order_status"`     // Phase 5 addition
+	OrderStatus     OrderState `json:"order_status"` // Phase 5 addition
 	Quantity        float64    `json:"quantity"`
 	FillPrice       float64    `json:"fill_price"`
 	TransactionCost float64    `json:"transaction_cost"` // Fee incurred
