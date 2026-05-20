@@ -74,4 +74,6 @@ linters:
 
 formatters:
   enable:
-    - gofumpt   # gofumpt is a formatter in v2, not a linter
+    - gofmt     # plain gofmt — strict enough; gofumpt's local-import grouping
+                # disagrees with the project's `sleipnir/internal/...` style
+                # and would force an unwanted three-group import layout

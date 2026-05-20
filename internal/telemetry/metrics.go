@@ -1,3 +1,8 @@
+// Package telemetry defines the Prometheus metrics sleipnir exposes on
+// /metrics. Counters for orders submitted/cancelled/rejected, histograms
+// for REST latency by endpoint, and gauges for the rate-limit token
+// budget. Phase 7 of the roadmap will extend this with active-order
+// gauges, intent-to-submit latency, and fill-to-publish latency.
 package telemetry
 
 import (

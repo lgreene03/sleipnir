@@ -1,3 +1,6 @@
+// Package config loads sleipnir's runtime configuration from environment
+// variables (via envconfig). All settings have sensible testnet defaults;
+// the only required values are BINANCE_API_KEY and BINANCE_API_SECRET.
 package config
 
 import (

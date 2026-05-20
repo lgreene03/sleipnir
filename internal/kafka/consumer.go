@@ -1,3 +1,7 @@
+// Package kafka wraps segmentio/kafka-go with the consumer and producer
+// roles sleipnir needs: pulling execution intents off
+// `executions.intents.v1` and publishing verified fills onto
+// `executions.fills.v1`. See docs/CONTRACTS.md for the wire spec.
 package kafka
 
 import (
