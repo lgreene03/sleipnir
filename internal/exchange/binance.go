@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -29,8 +28,6 @@ type BinanceConnector struct {
 	wsURL      string
 	httpClient *http.Client
 	logger     *slog.Logger
-
-	mu        sync.Mutex
 }
 
 // NewBinanceConnector creates a new BinanceConnector.

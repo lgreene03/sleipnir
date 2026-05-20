@@ -179,8 +179,9 @@ func TestSQLiteOrderStorePersistence(t *testing.T) {
 		t.Fatalf("failed to update order state: %v", err)
 	}
 
-	// Verify update
-	orders, states, filledQtys, err = store.GetActiveOrders(ctx)
+	// Verify update — `orders` slice itself isn't asserted on this round,
+	// only the maps. Use _ to keep the linter happy without dropping the call.
+	_, states, filledQtys, err = store.GetActiveOrders(ctx)
 	if err != nil {
 		t.Fatalf("failed to get active orders: %v", err)
 	}

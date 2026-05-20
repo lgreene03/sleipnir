@@ -164,8 +164,9 @@ func main() {
 
 	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: healthHandler(tracker),
+		Addr:              ":" + cfg.Port,
+		Handler:           healthHandler(tracker),
+		ReadHeaderTimeout: 10 * time.Second, // mitigates Slowloris (gosec G112)
 	}
 
 	go func() {

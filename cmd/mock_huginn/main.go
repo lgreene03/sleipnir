@@ -79,15 +79,15 @@ func main() {
 			inst := instruments[rand.Intn(len(instruments))]
 			side := sides[rand.Intn(len(sides))]
 			orderType := types[rand.Intn(len(types))]
-			
+
 			var qty float64
 			var price float64
-			
+
 			if inst == "BTC-USD" {
-				qty = 0.001 + rand.Float64()*0.004 // 0.001 - 0.005 BTC
+				qty = 0.001 + rand.Float64()*0.004      // 0.001 - 0.005 BTC
 				price = 62000.0 + rand.Float64()*3000.0 // 62k - 65k
 			} else {
-				qty = 0.01 + rand.Float64()*0.09 // 0.01 - 0.1 ETH
+				qty = 0.01 + rand.Float64()*0.09       // 0.01 - 0.1 ETH
 				price = 31000.0 + rand.Float64()*150.0 // 3.1k - 3.25k ETH / wait ETH price is around 3k, but let's make it 3100.0 + rand.Float64()*150
 			}
 
@@ -117,12 +117,13 @@ func main() {
 				continue
 			}
 
-			logger.Info("Generating trading intent", 
-				"orderID", intent.OrderID, 
-				"instrument", intent.Instrument, 
-				"side", intent.Side, 
-				"type", intent.Type, 
-				"qty", intent.Quantity, 
+			logger.Info(
+				"Generating trading intent",
+				"orderID", intent.OrderID,
+				"instrument", intent.Instrument,
+				"side", intent.Side,
+				"type", intent.Type,
+				"qty", intent.Quantity,
 				"price", intent.Price,
 			)
 

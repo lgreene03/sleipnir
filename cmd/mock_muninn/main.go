@@ -46,8 +46,9 @@ func main() {
 		groupID = "mock-muninn-tracker"
 	}
 
-	logger.Info("Configuration loaded", 
-		"kafka_brokers", brokers, 
+	logger.Info(
+		"Configuration loaded",
+		"kafka_brokers", brokers,
 		"fills_topic", topic,
 		"consumer_group", groupID,
 	)
@@ -107,7 +108,8 @@ func main() {
 		tracker.mu.Unlock()
 
 		// Pretty print details with slog
-		logger.Info("🔔 DOWNSTREAM EXECUTION FILL RECEIVED",
+		logger.Info(
+			"🔔 DOWNSTREAM EXECUTION FILL RECEIVED",
 			"orderID", fill.OrderID,
 			"instrument", fill.Instrument,
 			"side", fill.Side,
@@ -119,7 +121,8 @@ func main() {
 		)
 
 		// Print a pretty console summary
-		fmt.Printf("[Muninn Portfolio Tracker] %s | Fill Event: %s %s %s @ %.4f | Cumulative Vol: %.4f | Slippage Cost: $%.4f\n",
+		fmt.Printf(
+			"[Muninn Portfolio Tracker] %s | Fill Event: %s %s %s @ %.4f | Cumulative Vol: %.4f | Slippage Cost: $%.4f\n",
 			time.Now().Format("15:04:05"),
 			fill.Side,
 			fill.Instrument,
