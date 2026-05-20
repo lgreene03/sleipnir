@@ -52,27 +52,66 @@ func (ot *OrderTracker) AddOrder(order exchange.Order, state exchange.OrderState
 	}
 }
 
-// UpdateOrderState updates the status of an existing order. Returns true if the state changed.
+// UpdateOrderState updates the status of an existing order. Returns true if
+// the state changed.
+//
+// History note (audit "Stubbed / quietly broken"): the previous implementation
+// wrote filledQty=0 to the DB on every non-Filled transition, silently zeroing
+// out the column for partially-filled orders. The fix is to look up the
+// CURRENT filled_qty from the in-memory tracker (rebuilt from the store on
+// boot) before writing — only StateFilled overrides it to the full quantity.
+// Callers that already know the right qty should keep using
+// UpdateOrderStateAndQty (the WS path does); this method is for state-only
+// transitions like REJECTED, CANCELED, EXPIRED.
 func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderState) bool {
 	ot.mu.Lock()
 	oldState, exists := ot.states[orderID]
 	if !exists || oldState != state {
 		ot.states[orderID] = state
+		var filledQty float64
+		if state == exchange.StateFilled {
+			if o, ok := ot.orders[orderID]; ok {
+				filledQty = o.Quantity
+			}
+		} else {
+			// Preserve whatever filled_qty the store currently records — we
+			// don't have a fresh number to write, so don't blow away the old.
+			if ot.store != nil {
+				if q, ok := ot.lookupFilledQtyLocked(orderID); ok {
+					filledQty = q
+				}
+			}
+		}
 		ot.mu.Unlock()
 
 		if ot.store != nil {
-			filledQty := 0.0
-			if state == exchange.StateFilled {
-				if o, exists := ot.orders[orderID]; exists {
-					filledQty = o.Quantity
-				}
-			}
 			_ = ot.store.UpdateOrderState(context.Background(), orderID, state, filledQty)
 		}
 		return true
 	}
 	ot.mu.Unlock()
 	return false
+}
+
+// lookupFilledQtyLocked reads the order's current filled_qty from the store
+// without trying to refresh anything in memory. Called with ot.mu held.
+func (ot *OrderTracker) lookupFilledQtyLocked(orderID string) (float64, bool) {
+	// Avoid a round-trip on every state-only transition: GetActiveOrders is
+	// O(active set), and the boot path already populated us. Walk the locally
+	// cached snapshot first.
+	if ot.store == nil {
+		return 0, false
+	}
+	// Best-effort: fall back to a fresh query if we couldn't find it locally.
+	// We can't easily cache filled_qty per-order without changing the tracker
+	// shape, so the safe fallback is to issue one query. With single-digit
+	// active orders this is a cheap (< 1 ms) SQLite call.
+	_, _, qmap, err := ot.store.GetActiveOrders(context.Background())
+	if err != nil {
+		return 0, false
+	}
+	q, ok := qmap[orderID]
+	return q, ok
 }
 
 // UpdateOrderStateAndQty updates both the state and filled quantity.

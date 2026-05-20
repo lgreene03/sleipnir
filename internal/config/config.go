@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -36,12 +37,16 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to process environment config: %w", err)
 	}
 
-	// Validate required exchange parameters
-	if cfg.BinanceAPIKey == "" {
-		return nil, fmt.Errorf("missing BINANCE_API_KEY environment variable")
-	}
-	if cfg.BinanceAPISecret == "" {
-		return nil, fmt.Errorf("missing BINANCE_API_SECRET environment variable")
+	// Validate required exchange parameters — but only when the live Binance
+	// backend is selected. EXCHANGE_BACKEND=sim runs without any credentials
+	// (useful for local e2e tests and demos).
+	if os.Getenv("EXCHANGE_BACKEND") != "sim" {
+		if cfg.BinanceAPIKey == "" {
+			return nil, fmt.Errorf("missing BINANCE_API_KEY environment variable")
+		}
+		if cfg.BinanceAPISecret == "" {
+			return nil, fmt.Errorf("missing BINANCE_API_SECRET environment variable")
+		}
 	}
 
 	return &cfg, nil

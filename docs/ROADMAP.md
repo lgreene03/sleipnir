@@ -107,7 +107,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 3 — Testability and the simulated connector
+## Phase 3 — Testability and the simulated connector 🟢
 
 **Goal.** Decouple the gateway loop from Binance so the full intent→fill cycle can be exercised in unit tests.
 

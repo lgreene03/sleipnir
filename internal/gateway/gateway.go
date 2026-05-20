@@ -14,14 +14,13 @@ import (
 	"time"
 
 	"sleipnir/internal/exchange"
-	"sleipnir/internal/kafka"
 	"sleipnir/internal/telemetry"
 )
 
 // Gateway coordinates the order ingestion, submission, tracking, and fills broadcast loops.
 type Gateway struct {
-	consumer  *kafka.Consumer
-	producer  *kafka.Producer
+	consumer  IntentConsumer
+	producer  FillPublisher
 	connector exchange.ExchangeConnector
 	tracker   *OrderTracker
 	limiter   *TokenBucketLimiter
@@ -35,8 +34,8 @@ type Gateway struct {
 
 // NewGateway creates a new core Gateway.
 func NewGateway(
-	consumer *kafka.Consumer,
-	producer *kafka.Producer,
+	consumer IntentConsumer,
+	producer FillPublisher,
 	connector exchange.ExchangeConnector,
 	tracker *OrderTracker,
 	limiter *TokenBucketLimiter,

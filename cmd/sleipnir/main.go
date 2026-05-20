@@ -68,13 +68,31 @@ func main() {
 	tracker := gateway.NewOrderTracker().WithStore(store)
 	limiter := gateway.NewTokenBucketLimiter(cfg.RateLimitRPS)
 
-	connector := exchange.NewBinanceConnector(
-		cfg.BinanceAPIKey,
-		cfg.BinanceAPISecret,
-		cfg.BinanceRESTURL,
-		cfg.BinanceWSURL,
-		logger,
-	)
+	// Exchange backend selector. EXCHANGE_BACKEND=sim swaps the live Binance
+	// connector for the in-memory simulator — same ExchangeConnector
+	// interface, no credentials required. The default ("binance") preserves
+	// the production path.
+	var connector exchange.ExchangeConnector
+	switch backend := os.Getenv("EXCHANGE_BACKEND"); backend {
+	case "", "binance":
+		connector = exchange.NewBinanceConnector(
+			cfg.BinanceAPIKey,
+			cfg.BinanceAPISecret,
+			cfg.BinanceRESTURL,
+			cfg.BinanceWSURL,
+			logger,
+		)
+	case "sim":
+		logger.Warn("Using in-memory simulator backend; orders are NOT submitted to a real exchange")
+		connector = exchange.NewSimulatorConnector(exchange.SimulatorConfig{
+			FillPrice:       50_000.0,
+			TransactionCost: 0.0,
+			AlsoEmitOnWS:    false,
+		}, logger)
+	default:
+		logger.Error("Unknown EXCHANGE_BACKEND", "backend", backend, "valid", "binance|sim")
+		os.Exit(1)
+	}
 
 	consumer := kafka.NewConsumer(
 		cfg.KafkaBrokers,
