@@ -1,3 +1,8 @@
+// Package exchange defines the venue-agnostic ExchangeConnector interface
+// — SubmitOrder, CancelOrder, GetOrderState, StartUserStream — along with
+// the canonical Order / ExecutionFill types and the production Binance
+// Spot implementation. Sleipnir is single-venue today; multi-venue routing
+// is explicitly Phase F / deferred per docs/ROADMAP.md.
 package exchange
 
 import (
