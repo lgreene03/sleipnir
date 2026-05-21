@@ -189,9 +189,9 @@ To prevent scope drift:
 **Goal.** Be able to debug a problem at 3 AM without a debugger.
 
 **Deliverables.**
-- OpenTelemetry trace spans: `intent.consume → risk.check → limiter.wait → exchange.submit → fill.publish`. Span linkage via `traceparent` header in Kafka message headers (segmentio supports `kafka.Header`). Huginn becomes the parent on the intent producer side — this is a cross-repo coordination.
-- New metrics: `sleipnir_active_orders` (gauge), `sleipnir_intent_to_submit_seconds` (histogram), `sleipnir_fill_to_publish_seconds` (histogram), `sleipnir_kafka_consumer_lag` (gauge, polled via segmentio's `Reader.Lag()`), `sleipnir_db_query_seconds` (histogram).
-- Correlation ID: every log line touching an order carries `orderID` and a new `correlation_id` (UUID v7) generated at consume time and threaded through.
+- OpenTelemetry trace spans: `intent.consume → risk.check → limiter.wait → exchange.submit → fill.publish`. Span linkage via `traceparent` header in Kafka message headers.
+- ✅ **New metrics.** `sleipnir_active_orders` (gauge, incremented on accept/decremented on terminal state), `sleipnir_intent_to_submit_seconds` (histogram covering risk + rate-limiter + submit), `sleipnir_fill_to_publish_seconds` (histogram from WS receive to Kafka publish). `sleipnir_kafka_consumer_lag` and `sleipnir_db_query_seconds` deferred (require polling infrastructure).
+- ✅ **Correlation ID.** `correlation_id` UUID generated at intent-consume time; threaded through every `slog` log line that touches the same order lifecycle.
 - Grafana dashboard: add panels for intent-to-submit latency p95, fill-to-publish latency p95, WS uptime ratio, active order count, daily order budget consumed.
 - New alerts: `KafkaConsumerLagHigh` (lag > 100 for 5 min), `WSDisconnectedFor1Min`, `NoIntentsConsumed30Min` (operational liveness).
 - Switch the `Grafana` dashboard JSON to be generated from a Jsonnet/Tanka source committed under `telemetry/dashboards/src/` so dashboard diffs are reviewable.
@@ -208,12 +208,12 @@ To prevent scope drift:
 **Goal.** Make sleipnir installable, versioned, and reproducibly buildable.
 
 **Deliverables.**
-- `CHANGELOG.md` following Keep a Changelog.
+- ✅ **`CHANGELOG.md`** following Keep a Changelog, covering v0.1.0 through current.
 - Semver tagging starting at `v0.1.0`. Tag triggers `release.yml` that builds `linux/amd64` and `linux/arm64` Docker images, signs them with cosign, pushes to GHCR.
 - `goreleaser.yaml` for binary archives.
 - Pin all top-level dependencies to exact versions; review `go.sum` for surprises.
 - Lock the Dockerfile base image by digest (`alpine:3.20@sha256:…`).
-- `docs/RUNBOOK.md` mirroring muninn's — what to do when WS keeps reconnecting, when Kafka lag climbs, when the DB grows.
+- ✅ **`docs/RUNBOOK.md`** — WS reconnecting, Kafka lag climbing, SQLite growth, fills not arriving, key metrics table, graceful restart, config reload guidance.
 
 **Exit criteria.** `docker pull ghcr.io/lgreene/sleipnir:v0.1.0` works. A blank machine can reproduce the binary byte-for-byte from a tag.
 

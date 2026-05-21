@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/telemetry"
 )
@@ -109,6 +111,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				if !ok {
 					return
 				}
+				fillReceivedAt := time.Now()
 				gw.logger.Info("Gateway received real-time fill",
 					"orderID", fill.OrderID,
 					"instrument", fill.Instrument,
@@ -133,6 +136,12 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				}
 				gw.tracker.UpdateOrderStateAndQty(fill.OrderID, targetState, fill.Quantity)
 
+				// Decrement active orders on terminal state transitions.
+				if targetState == exchange.StateFilled || targetState == exchange.StateCanceled ||
+					targetState == exchange.StateRejected {
+					telemetry.ActiveOrders.Dec()
+				}
+
 				// Persist commission and slippage so downstream research can
 				// reconstruct realized transaction costs per order. Slippage is
 				// (fill_price − intent_price): positive on a buy means filled
@@ -151,6 +160,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				if err := gw.producer.PublishFill(ctx, fill); err != nil {
 					gw.logger.Error("Failed to broadcast execution fill downstream", "orderID", fill.OrderID, "error", err)
 				}
+				telemetry.FillToPublishSeconds.Observe(time.Since(fillReceivedAt).Seconds())
 			}
 		}
 	}()
@@ -179,17 +189,32 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				continue
 			}
 
-			gw.logger.Info("Ingested new execution intent", "orderID", intent.OrderID, "instrument", intent.Instrument, "qty", intent.Quantity, "side", intent.Side)
+			// Assign a correlation ID at consume time to thread through all
+			// log lines touching this intent's lifecycle.
+			correlationID := uuid.New().String()
+			intentIngestedAt := time.Now()
+
+			gw.logger.Info("Ingested new execution intent",
+				"orderID", intent.OrderID,
+				"correlation_id", correlationID,
+				"instrument", intent.Instrument,
+				"qty", intent.Quantity,
+				"side", intent.Side,
+			)
 			gw.ready.Store(true) // first successful consume → /readyz returns 200
 
 			// Operator kill-switch trumps everything else.
 			if gw.halt.IsHalted() {
 				gw.logger.Warn("Operator halt active — rejecting intent",
-					"orderID", intent.OrderID, "reason", gw.halt.Reason())
+					"orderID", intent.OrderID,
+					"correlation_id", correlationID,
+					"reason", gw.halt.Reason(),
+				)
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, "operator_halt").Inc()
 				gw.tracker.AddOrder(intent, exchange.StateRejected)
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
-					gw.logger.Error("Failed to commit offset after halt rejection", "orderID", intent.OrderID, "error", commitErr)
+					gw.logger.Error("Failed to commit offset after halt rejection",
+						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
 				continue
 			}
@@ -198,47 +223,50 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			if allowed, reason := gw.checkRiskLimits(ctx, intent); !allowed {
 				gw.logger.Error("Pre-trade risk limit check failed. Rejecting order.",
 					"orderID", intent.OrderID,
+					"correlation_id", correlationID,
 					"instrument", intent.Instrument,
 					"qty", intent.Quantity,
 					"reason", reason,
 				)
-
-				// Increment telemetry risk rejections count
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, reason).Inc()
-
-				// Commit state in memory and database stores as REJECTED
 				gw.tracker.AddOrder(intent, exchange.StateRejected)
-
-				// Commit Kafka offset to acknowledge message consumption
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
-					gw.logger.Error("Failed to commit offset after risk rejection", "orderID", intent.OrderID, "error", commitErr)
+					gw.logger.Error("Failed to commit offset after risk rejection",
+						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
 				continue
 			}
 
 			// Throttling outbound submissions with Token Bucket rate limiter
 			if err := gw.limiter.Wait(ctx); err != nil {
-				gw.logger.Error("Rate limiter wait cancelled", "error", err)
+				gw.logger.Error("Rate limiter wait cancelled",
+					"orderID", intent.OrderID, "correlation_id", correlationID, "error", err)
 				continue
 			}
 
 			// Register inside thread-safe tracker
 			gw.tracker.AddOrder(intent, exchange.StatePending)
+			telemetry.ActiveOrders.Inc()
 
 			// Send to concrete exchange connector
 			fill, err := gw.connector.SubmitOrder(ctx, intent)
+			telemetry.IntentToSubmitSeconds.Observe(time.Since(intentIngestedAt).Seconds())
 			if err != nil {
-				gw.logger.Error("Exchange submission failed", "orderID", intent.OrderID, "error", err)
+				gw.logger.Error("Exchange submission failed",
+					"orderID", intent.OrderID, "correlation_id", correlationID, "error", err)
 				gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateRejected)
+				telemetry.ActiveOrders.Dec()
 
 				// Commit offset even on rejection to prevent poisonous message loops
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
-					gw.logger.Error("Failed to commit offset after rejection", "orderID", intent.OrderID, "error", commitErr)
+					gw.logger.Error("Failed to commit offset after rejection",
+						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
 				continue
 			}
 
-			gw.logger.Info("Exchange submission accepted", "orderID", intent.OrderID, "state", exchange.StateSubmitted)
+			gw.logger.Info("Exchange submission accepted",
+				"orderID", intent.OrderID, "correlation_id", correlationID, "state", exchange.StateSubmitted)
 			gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateSubmitted)
 
 			// Track submitted orders metric
@@ -248,10 +276,13 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			// Fills received via WebSocket will be deduplicated downstream by sequence timestamps/IDs,
 			// but we also submit it here if filled quantity is positive.
 			if fill.Quantity > 0 {
-				gw.logger.Info("Immediate fill detected on submission", "orderID", fill.OrderID, "qty", fill.Quantity, "price", fill.FillPrice)
+				gw.logger.Info("Immediate fill detected on submission",
+					"orderID", fill.OrderID, "correlation_id", correlationID,
+					"qty", fill.Quantity, "price", fill.FillPrice)
 
 				// Track filled orders metric
 				telemetry.OrdersFilled.WithLabelValues(fill.Instrument, string(fill.Side)).Inc()
+				telemetry.ActiveOrders.Dec()
 
 				gw.tracker.UpdateOrderState(fill.OrderID, exchange.StateFilled)
 
@@ -259,12 +290,14 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				if gw.tracker.store != nil {
 					slippage := fill.FillPrice - intent.Price
 					if costErr := gw.tracker.store.RecordFillCosts(ctx, fill.OrderID, fill.TransactionCost, slippage); costErr != nil {
-						gw.logger.Warn("Failed to persist immediate fill costs", "orderID", fill.OrderID, "error", costErr)
+						gw.logger.Warn("Failed to persist immediate fill costs",
+							"orderID", fill.OrderID, "correlation_id", correlationID, "error", costErr)
 					}
 				}
 
 				if prodErr := gw.producer.PublishFill(ctx, fill); prodErr != nil {
-					gw.logger.Error("Failed to broadcast immediate execution fill", "orderID", fill.OrderID, "error", prodErr)
+					gw.logger.Error("Failed to broadcast immediate execution fill",
+						"orderID", fill.OrderID, "correlation_id", correlationID, "error", prodErr)
 				}
 			}
 

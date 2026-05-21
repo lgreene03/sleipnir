@@ -1,8 +1,4 @@
-// Package telemetry defines the Prometheus metrics sleipnir exposes on
-// /metrics. Counters for orders submitted/cancelled/rejected, histograms
-// for REST latency by endpoint, and gauges for the rate-limit token
-// budget. Phase 7 of the roadmap will extend this with active-order
-// gauges, intent-to-submit latency, and fill-to-publish latency.
+// Package telemetry defines the Prometheus metrics sleipnir exposes on /metrics.
 package telemetry
 
 import (
@@ -71,6 +67,29 @@ var (
 		},
 		[]string{"instrument", "reason"},
 	)
+
+	// ActiveOrders is the current count of orders in a non-terminal state
+	// (pending, submitted). Incremented on accept, decremented on fill/reject.
+	ActiveOrders = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "sleipnir_active_orders",
+		Help: "Current number of orders in a non-terminal state (pending or submitted).",
+	})
+
+	// IntentToSubmitSeconds measures the latency from intent ingestion to
+	// exchange submission call, covering risk check + rate-limiter wait.
+	IntentToSubmitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "sleipnir_intent_to_submit_seconds",
+		Help:    "Latency from Kafka intent consumed to exchange submission call, in seconds.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+	})
+
+	// FillToPublishSeconds measures the latency from a WS fill event being
+	// received to the fill being published to Kafka.
+	FillToPublishSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "sleipnir_fill_to_publish_seconds",
+		Help:    "Latency from WebSocket fill received to fill published to Kafka, in seconds.",
+		Buckets: []float64{0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+	})
 )
 
 func init() {
@@ -81,4 +100,7 @@ func init() {
 	prometheus.MustRegister(KafkaMessagesProcessed)
 	prometheus.MustRegister(WSConnectionDrops)
 	prometheus.MustRegister(RiskRejections)
+	prometheus.MustRegister(ActiveOrders)
+	prometheus.MustRegister(IntentToSubmitSeconds)
+	prometheus.MustRegister(FillToPublishSeconds)
 }
