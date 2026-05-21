@@ -203,7 +203,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 8 — Release engineering and stable v0.1.0
+## Phase 8 — Release engineering and stable v0.1.0 ✅
 
 **Goal.** Make sleipnir installable, versioned, and reproducibly buildable.
 
