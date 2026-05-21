@@ -59,13 +59,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Run GoReleaser (binaries + GitHub Release)
+        # GoReleaser creates the GitHub Release, attaches binary tar.gz/zip
+        # archives, and generates the changelog. Docker images were already
+        # pushed above; goreleaser skips docker (no dockers: block in config).
+        uses: goreleaser/goreleaser-action@v6
         with:
-          generate_release_notes: true
-          body: |
-            Docker image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
-
-            ```bash
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ```
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

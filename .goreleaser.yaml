@@ -1,0 +1,72 @@
+# .goreleaser.yaml — binary archive distribution for sleipnir.
+# Docker images are handled separately by .github/workflows/release.yml;
+# this file produces the downloadable tar.gz / zip archives attached to
+# each GitHub Release.
+#
+# Run locally: goreleaser release --snapshot --clean
+
+version: 2
+
+project_name: sleipnir
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: sleipnir
+    main: ./cmd/sleipnir
+    binary: sleipnir
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X sleipnir/internal/version.Version={{.Version}}
+      - -X sleipnir/internal/version.GitSHA={{.ShortCommit}}
+      - -X sleipnir/internal/version.BuildTime={{.Date}}
+
+archives:
+  - id: sleipnir
+    builds: [sleipnir]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - docs/RUNBOOK.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto
+  header: |
+    ## Docker image
+
+    ```bash
+    docker pull ghcr.io/lgreene03/sleipnir:{{ .Tag }}
+    ```
+  extra_files:
+    - glob: checksums.txt
