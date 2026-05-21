@@ -1,5 +1,6 @@
 # Stage 1: Build the statically linked Go executable
-FROM golang:1.26-alpine AS builder
+# Pin by digest so a tag reassignment cannot silently change the build environment.
+FROM golang:1.26-alpine@sha256:f44b851aa23dfa219d18db6eab743203245429d355cb619cf96a2ffe2a84ba7a AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -13,13 +14,21 @@ RUN go mod download
 # Copy the rest of the codebase
 COPY . .
 
-# Compile static binaries (disable CGO, strip symbols with ldflags)
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o sleipnir ./cmd/sleipnir
+# Compile static binaries (disable CGO, strip symbols with ldflags, inject version)
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -ldflags="-w -s \
+        -X sleipnir/internal/version.Version=${VERSION} \
+        -X sleipnir/internal/version.GitSHA=${GIT_SHA} \
+        -X sleipnir/internal/version.BuildTime=${BUILD_TIME}" \
+      -o sleipnir ./cmd/sleipnir
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_huginn ./cmd/mock_huginn
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_muninn ./cmd/mock_muninn
 
 # Stage 2: Final runner environment
-FROM alpine:3.23
+FROM alpine:3.23@sha256:4d889c14e7d5a73929ab00be2ef8ff22437e7cbc545931e52554a7b00e123d8b
 
 # Install SSL certificates and timezone databases
 RUN apk --no-cache add ca-certificates tzdata

@@ -16,6 +16,7 @@ import (
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/gateway"
 	"sleipnir/internal/kafka"
+	"sleipnir/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -27,7 +28,9 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	logger.Info("Starting Sleipnir Order Execution Gateway...")
+	v := version.Get()
+	logger.Info("Starting Sleipnir Order Execution Gateway",
+		"version", v.Version, "git_sha", v.GitSHA, "build_time", v.BuildTime)
 
 	// 2. Load environment configurations
 	cfg, err := config.LoadConfig()
@@ -315,6 +318,12 @@ func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gat
 		slog.Info("Operator kill switch cleared")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"halted":false}`))
+	})
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(version.Get()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	})
 	mux.Handle("/metrics", promhttp.Handler())
 	return mux

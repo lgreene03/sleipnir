@@ -212,7 +212,7 @@ To prevent scope drift:
 - Semver tagging starting at `v0.1.0`. Tag triggers `release.yml` that builds `linux/amd64` and `linux/arm64` Docker images, signs them with cosign, pushes to GHCR.
 - `goreleaser.yaml` for binary archives.
 - Pin all top-level dependencies to exact versions; review `go.sum` for surprises.
-- Lock the Dockerfile base image by digest (`alpine:3.20@sha256:…`).
+- ✅ **Dockerfile base images locked by digest.** `golang:1.26-alpine@sha256:...` and `alpine:3.23@sha256:...` pinned; `VERSION`/`GIT_SHA`/`BUILD_TIME` build-args inject version via `-ldflags`. `internal/version` package exposes them at `/version` endpoint and in the startup log.
 - ✅ **`docs/RUNBOOK.md`** — WS reconnecting, Kafka lag climbing, SQLite growth, fills not arriving, key metrics table, graceful restart, config reload guidance.
 
 **Exit criteria.** `docker pull ghcr.io/lgreene/sleipnir:v0.1.0` works. A blank machine can reproduce the binary byte-for-byte from a tag.
