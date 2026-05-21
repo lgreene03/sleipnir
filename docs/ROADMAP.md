@@ -209,7 +209,7 @@ To prevent scope drift:
 
 **Deliverables.**
 - ✅ **`CHANGELOG.md`** following Keep a Changelog, covering v0.1.0 through current.
-- Semver tagging starting at `v0.1.0`. Tag triggers `release.yml` that builds `linux/amd64` and `linux/arm64` Docker images, signs them with cosign, pushes to GHCR.
+- ✅ **`release.yml`** — tag push (v*.*.*) triggers multi-arch Docker build (`linux/amd64` + `linux/arm64`), pushes to GHCR, creates a GitHub Release with image pull instructions. Semver tagging starts at `v0.1.0`.
 - `goreleaser.yaml` for binary archives.
 - Pin all top-level dependencies to exact versions; review `go.sum` for surprises.
 - ✅ **Dockerfile base images locked by digest.** `golang:1.26-alpine@sha256:...` and `alpine:3.23@sha256:...` pinned; `VERSION`/`GIT_SHA`/`BUILD_TIME` build-args inject version via `-ldflags`. `internal/version` package exposes them at `/version` endpoint and in the startup log.
