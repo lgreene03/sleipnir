@@ -190,10 +190,10 @@ To prevent scope drift:
 
 **Deliverables.**
 - OpenTelemetry trace spans: `intent.consume → risk.check → limiter.wait → exchange.submit → fill.publish`. Span linkage via `traceparent` header in Kafka message headers.
-- ✅ **New metrics.** `sleipnir_active_orders` (gauge, incremented on accept/decremented on terminal state), `sleipnir_intent_to_submit_seconds` (histogram covering risk + rate-limiter + submit), `sleipnir_fill_to_publish_seconds` (histogram from WS receive to Kafka publish). `sleipnir_kafka_consumer_lag` and `sleipnir_db_query_seconds` deferred (require polling infrastructure).
+- ✅ **New metrics.** `sleipnir_active_orders` (gauge, incremented on accept/decremented on terminal state), `sleipnir_intent_to_submit_seconds` (histogram covering risk + rate-limiter + submit), `sleipnir_fill_to_publish_seconds` (histogram from WS receive to Kafka publish), `sleipnir_ws_connected` (gauge, 1=subscribed/0=disconnected). `sleipnir_kafka_consumer_lag` and `sleipnir_db_query_seconds` deferred (require polling infrastructure).
 - ✅ **Correlation ID.** `correlation_id` UUID generated at intent-consume time; threaded through every `slog` log line that touches the same order lifecycle.
+- ✅ **Operational alerts.** `WSDisconnectedFor1Min` (fires when `sleipnir_ws_connected == 0` for > 1 min) and `NoIntentsConsumed30Min` (fires when no intents consumed in a 30-minute window). `KafkaConsumerLagHigh` deferred — depends on `sleipnir_kafka_consumer_lag` which requires polling infrastructure not yet wired.
 - Grafana dashboard: add panels for intent-to-submit latency p95, fill-to-publish latency p95, WS uptime ratio, active order count, daily order budget consumed.
-- New alerts: `KafkaConsumerLagHigh` (lag > 100 for 5 min), `WSDisconnectedFor1Min`, `NoIntentsConsumed30Min` (operational liveness).
 - Switch the `Grafana` dashboard JSON to be generated from a Jsonnet/Tanka source committed under `telemetry/dashboards/src/` so dashboard diffs are reviewable.
 
 **Exit criteria.** A simulated WS outage produces an alert within 1 minute. A trace in any compatible viewer (Jaeger, Tempo) shows a single intent traversing huginn → sleipnir → Binance → huginn end-to-end.

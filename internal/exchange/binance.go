@@ -335,6 +335,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			conn, _, err := websocket.DefaultDialer.DialContext(ctx, bc.wsURL, nil)
 			if err != nil {
 				telemetry.WSConnectionDrops.Inc()
+				telemetry.WSConnected.Set(0)
 
 				jitterVal := (rand.Float64() * 2.0 * jitterPercent) - jitterPercent
 				currentDelayWithJitter := time.Duration(float64(retryDelay) * (1.0 + jitterVal))
@@ -380,6 +381,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 				conn.Close()
 
 				telemetry.WSConnectionDrops.Inc()
+				telemetry.WSConnected.Set(0)
 
 				if time.Since(connectedAt) > 30*time.Second {
 					retryDelay = baseDelay
@@ -415,6 +417,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 					conn.Close()
 
 					telemetry.WSConnectionDrops.Inc()
+					telemetry.WSConnected.Set(0)
 
 					aliveDuration := time.Since(connectedAt)
 					if aliveDuration > 30*time.Second {
@@ -456,6 +459,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 						bc.logger.Error("WS-API returned subscription error", "error", errMsg)
 					} else {
 						bc.logger.Info("WS-API successfully subscribed to user data stream!")
+						telemetry.WSConnected.Set(1)
 					}
 					continue
 				}

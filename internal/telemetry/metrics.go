@@ -90,6 +90,13 @@ var (
 		Help:    "Latency from WebSocket fill received to fill published to Kafka, in seconds.",
 		Buckets: []float64{0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 	})
+
+	// WSConnected is 1 when the exchange WebSocket user stream is subscribed and
+	// receiving messages, 0 otherwise. Used by the WSDisconnectedFor1Min alert.
+	WSConnected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "sleipnir_ws_connected",
+		Help: "1 if the exchange WebSocket user data stream is currently subscribed, 0 if disconnected or reconnecting.",
+	})
 )
 
 func init() {
@@ -103,4 +110,5 @@ func init() {
 	prometheus.MustRegister(ActiveOrders)
 	prometheus.MustRegister(IntentToSubmitSeconds)
 	prometheus.MustRegister(FillToPublishSeconds)
+	prometheus.MustRegister(WSConnected)
 }

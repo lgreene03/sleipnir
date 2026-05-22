@@ -27,3 +27,21 @@ groups:
         annotations:
           summary: "Pre-trade risk limits violation spike detected"
           description: "More than 5 orders ({{ $value }} orders) were rejected by pre-trade risk checks within 5 minutes."
+
+      - alert: WSDisconnectedFor1Min
+        expr: sleipnir_ws_connected == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Exchange WebSocket stream disconnected for over 1 minute"
+          description: "sleipnir_ws_connected has been 0 for >1m — the exchange user data stream is not receiving messages and fills are not being published."
+
+      - alert: NoIntentsConsumed30Min
+        expr: increase(sleipnir_kafka_messages_processed_total{topic="executions.intents.v1",operation="consume",status="success"}[30m]) == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No execution intents consumed in the last 30 minutes"
+          description: "sleipnir has not consumed any intent messages from executions.intents.v1 in 30m — either huginn has stopped publishing or the consumer is stuck."
