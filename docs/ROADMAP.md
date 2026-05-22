@@ -184,7 +184,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 7 — Observability completeness
+## Phase 7 — Observability completeness 🟢
 
 **Goal.** Be able to debug a problem at 3 AM without a debugger.
 

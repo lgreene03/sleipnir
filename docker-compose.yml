@@ -102,5 +102,21 @@ services:
     depends_on:
       - prometheus
 
+  # OpenTelemetry stack — opt in with `--profile tracing`.
+  # Tempo collects spans, Grafana renders them. The sleipnir + mock_huginn
+  # processes only export when OTEL_EXPORTER_OTLP_ENDPOINT is set, so leaving
+  # the tracing profile off is the default.
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: sleipnir-tempo
+    profiles: ["tracing"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200"  # tempo HTTP
+      - "4317:4317"  # OTLP/gRPC ingest — point OTEL_EXPORTER_OTLP_ENDPOINT here
+    volumes:
+      - ./telemetry/tempo.yaml:/etc/tempo.yaml
+    restart: on-failure
+
 volumes:
   sleipnir-data:
