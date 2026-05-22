@@ -1,0 +1,70 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly at 02:00 UTC — runs the binance_live suite with testnet secrets.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Testcontainers-backed integration tests (no testnet credentials needed).
+  # Uses build tag "integration"; skipped for non-test commits via the
+  # path filter. Redpanda is spun up by Testcontainers inside the test suite.
+  integration:
+    name: integration (Redpanda + simulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Verify go.mod
+        run: go mod verify
+
+      - name: Run integration tests
+        run: go test -v -race -tags=integration -timeout=10m ./...
+
+  # Live Binance Spot Testnet tests. Runs nightly and on manual dispatch only.
+  # Requires BINANCE_API_KEY and BINANCE_API_SECRET repository secrets.
+  binance-live:
+    name: binance-live (testnet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run on schedule or manual trigger — never on regular PRs.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Run live Binance testnet tests
+        env:
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+        # Retry once with backoff — testnet has occasional maintenance windows.
+        run: |
+          for attempt in 1 2; do
+            if go test -v -race -tags=binance_live -timeout=5m ./internal/exchange/...; then
+              exit 0
+            fi
+            echo "Attempt $attempt failed — waiting 60s before retry..."
+            sleep 60
+          done
+          exit 1
