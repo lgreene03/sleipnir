@@ -43,7 +43,10 @@ func NewConsumer(brokers []string, topic, groupID string, logger *slog.Logger) *
 	}
 }
 
-// FetchIntent retrieves the next execution intent. It does not commit the offset.
+// FetchIntent retrieves the next execution intent. It does not commit the
+// offset. The returned kafka.Message carries the upstream trace context in
+// its Headers; the gateway loop runs tracing.ExtractKafkaContext on it to
+// resume the trace huginn began on the producer side.
 func (c *Consumer) FetchIntent(ctx context.Context) (exchange.Order, kafka.Message, error) {
 	msg, err := c.reader.FetchMessage(ctx)
 	if err != nil {

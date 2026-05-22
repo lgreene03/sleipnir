@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/telemetry"
+	"sleipnir/internal/tracing"
 )
 
 // Gateway coordinates the order ingestion, submission, tracking, and fills broadcast loops.
@@ -189,8 +191,21 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				continue
 			}
 
+			// Resume the trace huginn began on the producer side. From this
+			// point until span.End() below, every otel-aware call we make is
+			// a child of huginn's `PublishIntent` span.
+			intentCtx := tracing.ExtractKafkaContext(ctx, msg.Headers)
+			intentCtx, span := tracing.StartSpan(intentCtx, "gateway.handle_intent",
+				attribute.String("order_id", intent.OrderID),
+				attribute.String("instrument", intent.Instrument),
+				attribute.String("side", string(intent.Side)),
+				attribute.Float64("quantity", intent.Quantity),
+			)
+
 			// Assign a correlation ID at consume time to thread through all
-			// log lines touching this intent's lifecycle.
+			// log lines touching this intent's lifecycle. Distinct from the
+			// trace ID (a correlation_id is human-typeable; the trace ID lives
+			// in the otel span attributes).
 			correlationID := uuid.New().String()
 			intentIngestedAt := time.Now()
 
@@ -210,17 +225,23 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					"correlation_id", correlationID,
 					"reason", gw.halt.Reason(),
 				)
+				span.SetAttributes(attribute.String("reject_reason", "operator_halt"))
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, "operator_halt").Inc()
 				gw.tracker.AddOrder(intent, exchange.StateRejected)
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 					gw.logger.Error("Failed to commit offset after halt rejection",
 						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
+				span.End()
 				continue
 			}
 
 			// Pre-trade risk limit validation checks
-			if allowed, reason := gw.checkRiskLimits(ctx, intent); !allowed {
+			riskCtx, riskSpan := tracing.StartSpan(intentCtx, "gateway.risk_check")
+			allowed, reason := gw.checkRiskLimits(riskCtx, intent)
+			riskSpan.SetAttributes(attribute.Bool("allowed", allowed), attribute.String("reason", reason))
+			riskSpan.End()
+			if !allowed {
 				gw.logger.Error("Pre-trade risk limit check failed. Rejecting order.",
 					"orderID", intent.OrderID,
 					"correlation_id", correlationID,
@@ -228,19 +249,25 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					"qty", intent.Quantity,
 					"reason", reason,
 				)
+				span.SetAttributes(attribute.String("reject_reason", reason))
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, reason).Inc()
 				gw.tracker.AddOrder(intent, exchange.StateRejected)
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 					gw.logger.Error("Failed to commit offset after risk rejection",
 						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
+				span.End()
 				continue
 			}
 
 			// Throttling outbound submissions with Token Bucket rate limiter
-			if err := gw.limiter.Wait(ctx); err != nil {
+			limiterCtx, limiterSpan := tracing.StartSpan(intentCtx, "gateway.limiter_wait")
+			err = gw.limiter.Wait(limiterCtx)
+			limiterSpan.End()
+			if err != nil {
 				gw.logger.Error("Rate limiter wait cancelled",
 					"orderID", intent.OrderID, "correlation_id", correlationID, "error", err)
+				span.End()
 				continue
 			}
 
@@ -249,11 +276,14 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			telemetry.ActiveOrders.Inc()
 
 			// Send to concrete exchange connector
-			fill, err := gw.connector.SubmitOrder(ctx, intent)
+			submitCtx, submitSpan := tracing.StartSpan(intentCtx, "exchange.submit_order")
+			fill, err := gw.connector.SubmitOrder(submitCtx, intent)
+			submitSpan.End()
 			telemetry.IntentToSubmitSeconds.Observe(time.Since(intentIngestedAt).Seconds())
 			if err != nil {
 				gw.logger.Error("Exchange submission failed",
 					"orderID", intent.OrderID, "correlation_id", correlationID, "error", err)
+				span.SetAttributes(attribute.String("reject_reason", "exchange_error"))
 				gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateRejected)
 				telemetry.ActiveOrders.Dec()
 
@@ -262,6 +292,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					gw.logger.Error("Failed to commit offset after rejection",
 						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
 				}
+				span.End()
 				continue
 			}
 
@@ -295,16 +326,21 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					}
 				}
 
-				if prodErr := gw.producer.PublishFill(ctx, fill); prodErr != nil {
+				publishCtx, publishSpan := tracing.StartSpan(intentCtx, "gateway.publish_fill",
+					attribute.String("execution_id", fill.ExecutionID),
+				)
+				if prodErr := gw.producer.PublishFill(publishCtx, fill); prodErr != nil {
 					gw.logger.Error("Failed to broadcast immediate execution fill",
 						"orderID", fill.OrderID, "correlation_id", correlationID, "error", prodErr)
 				}
+				publishSpan.End()
 			}
 
 			// Commit Kafka offset now that submission is complete and recorded
 			if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 				gw.logger.Error("Failed to commit consumer offset", "orderID", intent.OrderID, "error", commitErr)
 			}
+			span.End()
 		}
 	}()
 

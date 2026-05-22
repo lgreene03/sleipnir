@@ -16,6 +16,7 @@ import (
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/gateway"
 	"sleipnir/internal/kafka"
+	"sleipnir/internal/tracing"
 	"sleipnir/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -52,6 +53,22 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// OpenTelemetry tracing: if OTEL_EXPORTER_OTLP_ENDPOINT is set, spans are
+	// exported via OTLP/gRPC. Unset → no-op (still propagates W3C TraceContext
+	// in-process so headers flow through Kafka end-to-end).
+	tracingShutdown, err := tracing.Init(ctx, v.Version)
+	if err != nil {
+		logger.Error("Failed to initialize OTel tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			logger.Error("OTel tracing shutdown error", "error", err)
+		}
+	}()
 
 	// 4. Initialize components (Dependency Injection)
 	// Database path volume-mounted or default

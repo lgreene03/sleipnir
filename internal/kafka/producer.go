@@ -10,6 +10,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/telemetry"
+	"sleipnir/internal/tracing"
 )
 
 // Producer wraps a segmentio kafka.Writer to publish fills back to the tracking layer.
@@ -46,10 +47,16 @@ func (p *Producer) PublishFill(ctx context.Context, fill exchange.ExecutionFill)
 
 	p.logger.Info("Publishing fill to downstream tracking layer", "orderID", fill.OrderID, "instrument", fill.Instrument, "qty", fill.Quantity, "price", fill.FillPrice)
 
+	// Inject the current trace context so huginn's FillsConsumer can attach
+	// its OnExecutionFill span to the same trace tree the original intent
+	// began on huginn's producer side.
+	headers := tracing.InjectKafkaHeaders(ctx, nil)
+
 	err = p.writer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte(fill.OrderID),
-		Value: payload,
-		Time:  fill.Timestamp,
+		Key:     []byte(fill.OrderID),
+		Value:   payload,
+		Time:    fill.Timestamp,
+		Headers: headers,
 	})
 	if err != nil {
 		telemetry.KafkaMessagesProcessed.WithLabelValues(p.writer.Topic, "produce", "error").Inc()

@@ -81,6 +81,39 @@ Three codepaths produce fills, each with a stable construction pattern. No two r
 
 Huginn's `executor.OnExecutionFill` keeps a bounded LRU (10 000 entries) of seen `execution_id` values and drops duplicates with a WARN log. This is what makes the cross-restart reconciliation path safe.
 
+## Distributed tracing — `traceparent` / `tracestate` Kafka headers
+
+In addition to the JSON payload, every message on both topics carries W3C
+TraceContext headers as Kafka **message headers** (`segmentio/kafka-go`'s
+`kafka.Header`, not part of the JSON body):
+
+| Header | Source | Purpose |
+|---|---|---|
+| `traceparent` | huginn (intent) / sleipnir (fill) | W3C TraceContext — propagates `trace-id`, `span-id`, and trace flags so a single trade renders as one span tree end-to-end. |
+| `tracestate` | optional, vendor-specific | W3C standard companion to `traceparent`; usually empty. |
+
+Span topology (when an OTel collector is configured at
+`OTEL_EXPORTER_OTLP_ENDPOINT` on each service):
+
+```
+huginn:  OnFeature → PublishIntent  ─┐
+                                     │ traceparent
+                                     ▼
+sleipnir: gateway.handle_intent      [linked]
+           ├─ gateway.risk_check
+           ├─ gateway.limiter_wait
+           ├─ exchange.submit_order
+           │    └─ HTTP POST /api/v3/order
+           └─ gateway.publish_fill  ─┐
+                                     │ traceparent
+                                     ▼
+huginn:  OnExecutionFill             [linked]
+```
+
+When no exporter is configured the propagator still runs (no-op), so the
+headers flow through but no spans are recorded. Dev paths, tests, and the
+simulator path can run without an OTel collector.
+
 ## Wire-format change protocol
 
 1. **Open a discussion** in the sleipnir repo describing the change and the migration path.
