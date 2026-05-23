@@ -189,11 +189,11 @@ To prevent scope drift:
 **Goal.** Be able to debug a problem at 3 AM without a debugger.
 
 **Deliverables.**
-- OpenTelemetry trace spans: `intent.consume → risk.check → limiter.wait → exchange.submit → fill.publish`. Span linkage via `traceparent` header in Kafka message headers.
+- ✅ **OpenTelemetry trace spans.** `intent.consume → risk.check → limiter.wait → exchange.submit → fill.publish` wired in `internal/gateway/gateway.go` via `internal/tracing`. W3C TraceContext extracted from Kafka intent headers so spans link to huginn's `PublishIntent` span end-to-end. Local Tempo collector available under `--profile tracing` in docker-compose.
 - ✅ **New metrics.** `sleipnir_active_orders` (gauge, incremented on accept/decremented on terminal state), `sleipnir_intent_to_submit_seconds` (histogram covering risk + rate-limiter + submit), `sleipnir_fill_to_publish_seconds` (histogram from WS receive to Kafka publish), `sleipnir_ws_connected` (gauge, 1=subscribed/0=disconnected). `sleipnir_kafka_consumer_lag` and `sleipnir_db_query_seconds` deferred (require polling infrastructure).
 - ✅ **Correlation ID.** `correlation_id` UUID generated at intent-consume time; threaded through every `slog` log line that touches the same order lifecycle.
 - ✅ **Operational alerts.** `WSDisconnectedFor1Min` (fires when `sleipnir_ws_connected == 0` for > 1 min) and `NoIntentsConsumed30Min` (fires when no intents consumed in a 30-minute window). `KafkaConsumerLagHigh` deferred — depends on `sleipnir_kafka_consumer_lag` which requires polling infrastructure not yet wired.
-- Grafana dashboard: add panels for intent-to-submit latency p95, fill-to-publish latency p95, WS uptime ratio, active order count, daily order budget consumed.
+- ✅ **Grafana dashboard panels.** Added "Operational Health" row (Active Orders gauge, WS Connection status, Daily Orders Consumed 24 h) and "Pipeline Latency" row (Intent-to-Submit p50/p95, Fill-to-Publish p50/p95) backed by the new Phase 7 metrics.
 - Switch the `Grafana` dashboard JSON to be generated from a Jsonnet/Tanka source committed under `telemetry/dashboards/src/` so dashboard diffs are reviewable.
 
 **Exit criteria.** A simulated WS outage produces an alert within 1 minute. A trace in any compatible viewer (Jaeger, Tempo) shows a single intent traversing huginn → sleipnir → Binance → huginn end-to-end.
