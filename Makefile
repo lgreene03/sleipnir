@@ -5,10 +5,14 @@ GO            ?= go
 GOLANGCI_LINT ?= golangci-lint
 DOCKER        ?= docker
 COMPOSE       ?= docker compose
+JSONNET       ?= jsonnet
+
+DASHBOARD_SRC := telemetry/dashboards/src/sleipnir.jsonnet
+DASHBOARD_OUT := telemetry/grafana/provisioning/dashboards/dashboard.json
 
 .PHONY: help build test test-race test-cover lint fmt vet ci \
         compose-up compose-down compose-logs \
-        integration clean tidy
+        integration clean tidy dashboard-regen
 
 help: ## Print this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -57,3 +61,6 @@ integration: ## Run integration tests (Phase 4 — build tag `integration`).
 
 clean: ## Remove build outputs.
 	rm -rf bin/ cover.out
+
+dashboard-regen: ## Compile Jsonnet source → provisioning dashboard JSON (requires: brew install jsonnet).
+	$(JSONNET) $(DASHBOARD_SRC) > $(DASHBOARD_OUT)

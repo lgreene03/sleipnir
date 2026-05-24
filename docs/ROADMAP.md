@@ -184,7 +184,7 @@ To prevent scope drift:
 
 ---
 
-## Phase 7 — Observability completeness 🟢
+## Phase 7 — Observability completeness ✅
 
 **Goal.** Be able to debug a problem at 3 AM without a debugger.
 
@@ -194,7 +194,7 @@ To prevent scope drift:
 - ✅ **Correlation ID.** `correlation_id` UUID generated at intent-consume time; threaded through every `slog` log line that touches the same order lifecycle.
 - ✅ **Operational alerts.** `WSDisconnectedFor1Min` (fires when `sleipnir_ws_connected == 0` for > 1 min) and `NoIntentsConsumed30Min` (fires when no intents consumed in a 30-minute window). `KafkaConsumerLagHigh` deferred — depends on `sleipnir_kafka_consumer_lag` which requires polling infrastructure not yet wired.
 - ✅ **Grafana dashboard panels.** Added "Operational Health" row (Active Orders gauge, WS Connection status, Daily Orders Consumed 24 h) and "Pipeline Latency" row (Intent-to-Submit p50/p95, Fill-to-Publish p50/p95) backed by the new Phase 7 metrics.
-- Switch the `Grafana` dashboard JSON to be generated from a Jsonnet/Tanka source committed under `telemetry/dashboards/src/` so dashboard diffs are reviewable.
+- ✅ **Jsonnet source for Grafana dashboard.** `telemetry/dashboards/src/sleipnir.jsonnet` is the human-readable source of truth. `make dashboard-regen` (requires `brew install jsonnet`) compiles it to the provisioning JSON. Dashboard diffs are now reviewable — edit the `.jsonnet`, not the raw JSON.
 
 **Exit criteria.** A simulated WS outage produces an alert within 1 minute. A trace in any compatible viewer (Jaeger, Tempo) shows a single intent traversing huginn → sleipnir → Binance → huginn end-to-end.
 
