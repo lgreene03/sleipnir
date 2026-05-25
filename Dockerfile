@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -X sleipnir/internal/version.BuildTime=${BUILD_TIME}" \
       -o sleipnir ./cmd/sleipnir
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_huginn ./cmd/mock_huginn
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_muninn ./cmd/mock_muninn
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o mock_portfolio ./cmd/mock_portfolio
 
 # Stage 2: Final runner environment
 FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
@@ -38,7 +38,7 @@ WORKDIR /app
 # Copy executables from compiler environment
 COPY --from=builder /app/sleipnir .
 COPY --from=builder /app/mock_huginn .
-COPY --from=builder /app/mock_muninn .
+COPY --from=builder /app/mock_portfolio .
 
 # Expose HTTP health server port
 EXPOSE 8080

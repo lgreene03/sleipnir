@@ -27,7 +27,7 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	logger.Info("Starting Mock Muninn Downstream Portfolio Tracker...")
+	logger.Info("Starting Mock Portfolio Downstream Tracker...")
 
 	// 1. Get configurations from environment
 	brokersEnv := os.Getenv("KAFKA_BROKERS")
@@ -43,7 +43,7 @@ func main() {
 
 	groupID := os.Getenv("KAFKA_CONSUMER_GROUP")
 	if groupID == "" {
-		groupID = "mock-muninn-tracker"
+		groupID = "mock-portfolio-tracker"
 	}
 
 	logger.Info(
@@ -122,7 +122,7 @@ func main() {
 
 		// Print a pretty console summary
 		fmt.Printf(
-			"[Muninn Portfolio Tracker] %s | Fill Event: %s %s %s @ %.4f | Cumulative Vol: %.4f | Slippage Cost: $%.4f\n",
+			"[Portfolio Tracker] %s | Fill Event: %s %s %s @ %.4f | Cumulative Vol: %.4f | Slippage Cost: $%.4f\n",
 			time.Now().Format("15:04:05"),
 			fill.Side,
 			fill.Instrument,

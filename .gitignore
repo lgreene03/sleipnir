@@ -8,7 +8,7 @@
 bin/
 /sleipnir
 /mock_huginn
-/mock_muninn
+/mock_portfolio
 
 # Local OS files
 .DS_Store

@@ -14,7 +14,7 @@ Phased delivery mirrors the discipline of the muninn server roadmap and the muni
 - `internal/gateway/store.go` — SQLite via `modernc.org/sqlite` (CGO-free), embedded versioned migrations (`dbMigrations`, 3 versions), `schema_migrations` ledger, transactional apply.
 - `internal/gateway/tracker.go` — in-memory state with persistent backing, `WithStore` preload on boot, token bucket limiter with telemetry.
 - `cmd/sleipnir/main.go` — slog JSON logger, active boot-time reconciliation that backfills missed fills via `producer.PublishFill` (lines 92–147), graceful shutdown on SIGINT/SIGTERM, health/telemetry/metrics HTTP server.
-- `cmd/mock_huginn`, `cmd/mock_muninn` — local end-to-end loop simulators.
+- `cmd/mock_huginn`, `cmd/mock_portfolio` — local end-to-end loop simulators.
 - `telemetry/` — Prometheus scrape config, 3 alert rules (`HighRESTLatency` p95 > 1.5s, `WebsocketDisconnectSpike`, `RiskLimitsViolationSpike`), Grafana provisioning.
 - 9 unit tests across `binance_test.go` and `gateway_test.go` (tracker, limiter pacing, sqlite persistence, migrations, risk limits, concurrency).
 
@@ -42,7 +42,7 @@ Phased delivery mirrors the discipline of the muninn server roadmap and the muni
 
 **Integration gaps with huginn / muninn.**
 - Wire formats **match exactly**. Sleipnir's `exchange.Order` JSON and huginn's `kafka.GatewayOrder` (`/Users/lgreene/huginn/internal/kafka/producer.go:14–22`) align field-for-field. Same for `exchange.ExecutionFill` ↔ `kafka.GatewayFill` (`/Users/lgreene/huginn/internal/kafka/fills_consumer.go:14–22`). Topics `executions.intents.v1` / `executions.fills.v1` and default group `sleipnir-gateway` line up.
-- **Naming hazard.** The `cmd/mock_muninn` binary is misnamed: muninn (the JVM service) is the **feature engine**, not a portfolio tracker. The downstream consumer of fills is huginn. The mock should be renamed `mock_portfolio` or `mock_huginn_fills` to avoid steering a future reader into believing muninn ingests fills. (It does not.)
+- ✅ **Naming hazard resolved.** Formerly `cmd/mock_muninn` — renamed to `cmd/mock_portfolio` so future readers don't conclude muninn (the JVM feature engine) ingests execution fills. The downstream consumer of fills is huginn; the mock represents huginn's portfolio-tracking side. Compose service is `mock-portfolio`; consumer group is `mock-portfolio-tracker`. Existing deployments must migrate the Kafka consumer-group offset (or accept a one-time replay from earliest).
 - No schema versioning headers on Kafka messages. Topic name has `v1` but the payloads carry no `schema_version` field, so a future v2 must be a new topic.
 - No idempotency key on `ExecutionFill`. Huginn's `OnExecutionFill` will double-count if a fill is republished after a sleipnir restart. The boot reconciliation backfill at `main.go:122–139` is exactly that scenario — partial fills observed before the crash will be re-emitted as a single `delta_qty` event that huginn cannot reconcile against what it already applied. **This is a real bug**, not a hypothetical.
 - Huginn has no health probe contract with sleipnir. There is no way for huginn to know sleipnir is connected to the exchange before it starts publishing intents.

@@ -21,7 +21,7 @@ help: ## Print this help.
 build: ## Build all binaries to ./bin.
 	$(GO) build -o bin/sleipnir ./cmd/sleipnir
 	$(GO) build -o bin/mock_huginn ./cmd/mock_huginn
-	$(GO) build -o bin/mock_muninn ./cmd/mock_muninn
+	$(GO) build -o bin/mock_portfolio ./cmd/mock_portfolio
 
 test: ## Run unit tests.
 	$(GO) test ./...

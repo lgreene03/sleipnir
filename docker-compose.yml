@@ -59,20 +59,22 @@ services:
       - KAFKA_INTENTS_TOPIC=executions.intents.v1
     restart: on-failure
 
-  # Mock Muninn - Portfolio Tracking (ingests fills)
-  mock-muninn:
+  # Mock Portfolio Tracker - consumes fills downstream of sleipnir.
+  # Represents the huginn-side fills consumer; named "portfolio" to avoid
+  # implying muninn (the feature engine) ingests execution fills (it does not).
+  mock-portfolio:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mock-muninn
-    entrypoint: ["./mock_muninn"]
+    container_name: mock-portfolio
+    entrypoint: ["./mock_portfolio"]
     depends_on:
       sleipnir:
         condition: service_started
     environment:
       - KAFKA_BROKERS=redpanda:29092
       - KAFKA_FILLS_TOPIC=executions.fills.v1
-      - KAFKA_CONSUMER_GROUP=mock-muninn-tracker
+      - KAFKA_CONSUMER_GROUP=mock-portfolio-tracker
     restart: on-failure
 
   # Prometheus Telemetry Collector
