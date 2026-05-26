@@ -126,12 +126,12 @@ To prevent scope drift:
 
 ---
 
-## Phase 4 — Integration tests against real Redpanda and Binance testnet 🟢
+## Phase 4 — Integration tests against real Redpanda and Binance testnet ✅
 
 **Goal.** Verify that the wire actually works, not just that the code compiles.
 
 **Deliverables.**
-- `internal/gateway/integration_test.go` (build tag `integration`) — uses Testcontainers-Go to spin a Redpanda container, runs the full gateway against the simulator, asserts published fills round-trip through Kafka.
+- ✅ `internal/gateway/integration_test.go` (build tag `integration`) — uses Testcontainers-Go to spin a Redpanda container, wires the gateway with the real `kafka.Consumer`/`kafka.Producer` against the simulator connector, seeds intents on `executions.intents.v1` and asserts matching fills round-trip on `executions.fills.v1` with non-empty `ExecutionID`s.
 - ✅ `internal/exchange/binance_live_test.go` (build tag `binance_live`) — submits a tiny LIMIT order with an impossible price against Binance testnet, asserts `StateSubmitted`, then cancels. Reads creds from env, skips silently if absent.
 - ✅ A separate CI job `integration-tests.yml` runs only the `integration` build tag (not `binance_live`). The `binance_live` tag runs on a nightly schedule with secrets injected from GitHub.
 - ✅ Add a contract test that decodes a recorded huginn `GatewayOrder` JSON blob (committed under `testdata/huginn_intent_v1.json`) into `exchange.Order` and back. Catches accidental field renames in either repo.
