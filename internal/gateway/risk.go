@@ -184,3 +184,52 @@ func (h *Halt) Reason() string {
 	defer h.mu.RUnlock()
 	return h.reason
 }
+
+// Validation rejection reasons. Stable strings — used as Prometheus label
+// values on `sleipnir_risk_rejections_total{reason=...}` and as the
+// `reject_reason` span attribute. Keep cardinality bounded.
+const (
+	ReasonOrderIDEmpty       = "orderid_empty"
+	ReasonOrderIDTooLong     = "orderid_too_long"
+	ReasonOrderIDInvalidChar = "orderid_invalid_char"
+	ReasonOrderIDDuplicate   = "orderid_duplicate"
+)
+
+// MaxOrderIDLen bounds the OrderID a producer may submit. Binance Spot's
+// `newClientOrderId` is documented at 36 chars; we accept up to 64 to absorb
+// producer-side prefixes (e.g. huginn's `huginn-live-order-<ns>-<n>` form
+// runs ~39 chars). Anything longer is almost certainly malformed and would
+// be rejected at the exchange anyway — fail fast here, don't burn a rate
+// limiter token.
+const MaxOrderIDLen = 64
+
+// ValidateOrderID enforces a safe character class and length on incoming
+// intent OrderIDs before they propagate into the signed Binance request or
+// the in-memory tracker. Closes audit finding H4: an attacker with publish
+// rights to the intents topic could otherwise inject Binance-reserved
+// characters (causing post-rate-limit rejection — a cheap DoS / fee burn)
+// or collide on an existing OrderID to overwrite tracker state.
+//
+// Accepted set is the conservative `[A-Za-z0-9_-]` — broad enough for every
+// real producer in this stack, narrow enough to keep URL-encoding and HMAC
+// signing total. A duplicate-active-OrderID check lives separately in the
+// gateway dispatch path, since it needs the tracker.
+func ValidateOrderID(orderID string) error {
+	if orderID == "" {
+		return errors.New(ReasonOrderIDEmpty)
+	}
+	if len(orderID) > MaxOrderIDLen {
+		return errors.New(ReasonOrderIDTooLong)
+	}
+	for _, r := range orderID {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '_', r == '-':
+		default:
+			return errors.New(ReasonOrderIDInvalidChar)
+		}
+	}
+	return nil
+}

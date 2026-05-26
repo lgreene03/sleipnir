@@ -185,6 +185,131 @@ func TestGatewayE2E_RiskRejectionDoesNotEmitFill(t *testing.T) {
 	}
 }
 
+// TestGatewayE2E_OrderIDValidation drives the gateway loop with three
+// adversarial OrderIDs (whitespace, control char, over-length) and asserts
+// that none reach the connector — no fill is published — while the offsets
+// are still committed so the topic doesn't poison. Closes audit H4.
+func TestGatewayE2E_OrderIDValidation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	overLong := make([]byte, MaxOrderIDLen+5)
+	for i := range overLong {
+		overLong[i] = 'a'
+	}
+
+	consumer := &fakeConsumer{
+		intents: []exchange.Order{
+			{OrderID: "bad id", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01, Type: exchange.TypeMarket, Price: 50_000},
+			{OrderID: "bad\nid", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01, Type: exchange.TypeMarket, Price: 50_000},
+			{OrderID: string(overLong), Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01, Type: exchange.TypeMarket, Price: 50_000},
+		},
+	}
+	publisher := &fakePublisher{}
+	sim := exchange.NewSimulatorConnector(exchange.SimulatorConfig{
+		FillPrice: 50_000.0,
+		Now:       func() time.Time { return time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC) },
+	}, slog.Default())
+
+	gw := NewGateway(
+		consumer, publisher, sim,
+		NewOrderTracker(), NewTokenBucketLimiter(1000),
+		NewLegacyRiskPolicy(10.0, 100.0), NewHalt(),
+		100, slog.Default(),
+	)
+
+	done := make(chan struct{})
+	go func() {
+		_ = gw.Start(ctx)
+		close(done)
+	}()
+
+	// Wait until all three are committed (rejections still commit offsets).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		consumer.mu.Lock()
+		c := len(consumer.committed)
+		consumer.mu.Unlock()
+		if c >= 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if got := len(publisher.snapshot()); got != 0 {
+		t.Fatalf("invalid OrderIDs must not produce fills, got %d", got)
+	}
+	consumer.mu.Lock()
+	committed := len(consumer.committed)
+	consumer.mu.Unlock()
+	if committed != 3 {
+		t.Errorf("expected 3 committed offsets (each rejection commits), got %d", committed)
+	}
+}
+
+// TestGatewayE2E_DuplicateOrderID confirms that an OrderID already present
+// in the tracker (active or terminal) is rejected before submission, so an
+// adversary cannot overwrite tracker state by replaying an OrderID.
+func TestGatewayE2E_DuplicateOrderID(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	tracker := NewOrderTracker()
+	tracker.AddOrder(
+		exchange.Order{OrderID: "preexisting-1", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01},
+		exchange.StateSubmitted,
+	)
+
+	consumer := &fakeConsumer{
+		intents: []exchange.Order{
+			{OrderID: "preexisting-1", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01, Type: exchange.TypeMarket, Price: 50_000},
+		},
+	}
+	publisher := &fakePublisher{}
+	sim := exchange.NewSimulatorConnector(exchange.SimulatorConfig{
+		FillPrice: 50_000.0,
+		Now:       func() time.Time { return time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC) },
+	}, slog.Default())
+
+	gw := NewGateway(
+		consumer, publisher, sim,
+		tracker, NewTokenBucketLimiter(1000),
+		NewLegacyRiskPolicy(10.0, 100.0), NewHalt(),
+		100, slog.Default(),
+	)
+
+	done := make(chan struct{})
+	go func() {
+		_ = gw.Start(ctx)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		consumer.mu.Lock()
+		c := len(consumer.committed)
+		consumer.mu.Unlock()
+		if c >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if got := len(publisher.snapshot()); got != 0 {
+		t.Fatalf("duplicate OrderID must not produce a fill, got %d", got)
+	}
+	// The preexisting order's state must NOT have been overwritten.
+	if s, _ := tracker.GetOrderState("preexisting-1"); s != exchange.StateSubmitted {
+		t.Errorf("duplicate-OrderID rejection must not overwrite tracker state, got %s", s)
+	}
+}
+
 // TestUpdateOrderStatePreservesFilledQty regression-tests the audit-flagged
 // bug where transitioning out of PartiallyFilled into REJECTED/CANCELED/
 // EXPIRED used to silently zero out the filled_qty column.

@@ -521,3 +521,66 @@ func TestDailySideLimitRejection(t *testing.T) {
 		t.Errorf("sell should pass per-side check, got rejected: %s", reason)
 	}
 }
+
+// TestValidateOrderID exercises every branch of the OrderID validator that
+// closes audit H4. The accepted set is `[A-Za-z0-9_-]` and the length cap is
+// MaxOrderIDLen; everything else must be rejected with the documented reason
+// string so telemetry labels stay stable.
+func TestValidateOrderID(t *testing.T) {
+	t.Parallel()
+
+	longOK := make([]byte, MaxOrderIDLen)
+	for i := range longOK {
+		longOK[i] = 'a'
+	}
+	longBad := make([]byte, MaxOrderIDLen+1)
+	for i := range longBad {
+		longBad[i] = 'a'
+	}
+
+	cases := []struct {
+		name    string
+		orderID string
+		want    string // "" = expect nil error
+	}{
+		// Accepted shapes — representative real-world producers.
+		{"huginn_documented_form", "huginn-1716123456789", ""},
+		{"huginn_live_form_39chars", "huginn-live-order-1716123456789012345-1", ""},
+		{"simulator_pattern", "ord-1", ""},
+		{"alnum_underscore_dash", "Abc_123-XYZ", ""},
+		{"max_length_boundary", string(longOK), ""},
+
+		// Rejected shapes.
+		{"empty", "", ReasonOrderIDEmpty},
+		{"too_long_by_one", string(longBad), ReasonOrderIDTooLong},
+		{"space", "huginn 123", ReasonOrderIDInvalidChar},
+		{"slash", "huginn/123", ReasonOrderIDInvalidChar},
+		{"backslash", "huginn\\123", ReasonOrderIDInvalidChar},
+		{"colon", "huginn:123", ReasonOrderIDInvalidChar},
+		{"semicolon", "huginn;123", ReasonOrderIDInvalidChar},
+		{"newline", "huginn\n123", ReasonOrderIDInvalidChar},
+		{"null_byte", "huginn\x00123", ReasonOrderIDInvalidChar},
+		{"unicode", "huginn-€123", ReasonOrderIDInvalidChar},
+		{"dot_rejected", "huginn.123", ReasonOrderIDInvalidChar},
+		{"plus_rejected", "huginn+123", ReasonOrderIDInvalidChar},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidateOrderID(c.orderID)
+			if c.want == "" {
+				if err != nil {
+					t.Errorf("ValidateOrderID(%q) returned %v, want nil", c.orderID, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("ValidateOrderID(%q) returned nil, want %q", c.orderID, c.want)
+				return
+			}
+			if err.Error() != c.want {
+				t.Errorf("ValidateOrderID(%q) reason = %q, want %q", c.orderID, err.Error(), c.want)
+			}
+		})
+	}
+}

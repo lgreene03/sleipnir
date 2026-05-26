@@ -29,9 +29,10 @@ _Date: 2026-05-19. Scope: `internal/exchange/binance.go`, `internal/gateway/`, `
 `gateway.go:128` → `gateway.go:159`. Between `checkRiskLimits` (which reads `GetDailyOrderCount`) and `SubmitOrder`, no lock is held. Concurrent intents (the loop is single-goroutine today but `wg.Add` patterns + future parallelism break this) can both pass the `count >= maxDailyOrders` check and exceed the cap. Also `tracker.AddOrder(... StatePending)` happens *after* the rate limiter — count isn't incremented atomically with check.
 *Fix:* atomic check-and-increment inside the store (SQL `INSERT ... WHERE (SELECT count) < N`).
 
-**H4. `newClientOrderId` uses caller-supplied `OrderID` with no validation**
+**H4. ~~`newClientOrderId` uses caller-supplied `OrderID` with no validation~~ — RESOLVED 2026-05-26**
 `binance.go:119`. Whatever Kafka publishes lands directly in the signed request. An attacker who controls the topic can inject collisions to overwrite tracker state (`tracker.AddOrder` keyed by OrderID at `gateway.go:156`), or inject Binance-reserved characters causing the order to be rejected after the rate-limit token is spent (cheap DoS / fee burn).
 *Fix:* validate against `^[A-Za-z0-9_-]{1,36}$`, reject collisions in tracker before submit.
+*Resolution.* `gateway.ValidateOrderID` (`internal/gateway/risk.go`) rejects empty / over-length (>64 char) / disallowed-character OrderIDs with stable telemetry-friendly reason strings (`orderid_empty`, `orderid_too_long`, `orderid_invalid_char`). A duplicate-OrderID check in the gateway dispatch path (`internal/gateway/gateway.go`) rejects any OrderID already present in the tracker, blocking the state-overwrite vector. The 36 → 64 length cap is a deliberate accommodation: huginn's `huginn-live-order-<nanos>-<n>` form runs ~39 chars today, well within Binance's enforced limit; tightening further would have broken the working producer. Unit tests in `gateway_test.go::TestValidateOrderID` cover every branch; e2e tests in `gateway_e2e_test.go::TestGatewayE2E_OrderIDValidation` and `TestGatewayE2E_DuplicateOrderID` confirm rejected intents never reach the connector and never overwrite tracker state.
 
 ## Medium
 

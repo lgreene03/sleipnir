@@ -236,6 +236,45 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				continue
 			}
 
+			// OrderID validation (closes audit H4). Rejects empty / over-long /
+			// disallowed-character IDs before they reach the signed Binance
+			// request or overwrite an in-memory tracker slot. Also rejects
+			// duplicates against any OrderID the tracker already knows — the
+			// gateway is the sole writer to `newClientOrderId`, so a collision
+			// here either means a buggy producer or a malicious replay.
+			if err := ValidateOrderID(intent.OrderID); err != nil {
+				reason := err.Error()
+				gw.logger.Warn("Rejecting intent: invalid OrderID",
+					"orderID", intent.OrderID,
+					"correlation_id", correlationID,
+					"reason", reason,
+				)
+				span.SetAttributes(attribute.String("reject_reason", reason))
+				telemetry.RiskRejections.WithLabelValues(intent.Instrument, reason).Inc()
+				// Do NOT call tracker.AddOrder — an invalid OrderID is the one
+				// case where writing into the tracker is itself the attack.
+				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
+					gw.logger.Error("Failed to commit offset after orderID validation rejection",
+						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
+				}
+				span.End()
+				continue
+			}
+			if _, dup := gw.tracker.GetOrderState(intent.OrderID); dup {
+				gw.logger.Warn("Rejecting intent: duplicate OrderID",
+					"orderID", intent.OrderID,
+					"correlation_id", correlationID,
+				)
+				span.SetAttributes(attribute.String("reject_reason", ReasonOrderIDDuplicate))
+				telemetry.RiskRejections.WithLabelValues(intent.Instrument, ReasonOrderIDDuplicate).Inc()
+				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
+					gw.logger.Error("Failed to commit offset after duplicate OrderID rejection",
+						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
+				}
+				span.End()
+				continue
+			}
+
 			// Pre-trade risk limit validation checks
 			riskCtx, riskSpan := tracing.StartSpan(intentCtx, "gateway.risk_check")
 			allowed, reason := gw.checkRiskLimits(riskCtx, intent)
