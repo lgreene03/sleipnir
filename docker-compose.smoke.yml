@@ -1,0 +1,9 @@
+# Smoke-test overlay: swaps the live Binance connector for the in-memory
+# simulator so the full pipeline runs without exchange credentials.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d --build
+
+services:
+  sleipnir:
+    environment:
+      - EXCHANGE_BACKEND=sim
