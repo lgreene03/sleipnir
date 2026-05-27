@@ -11,9 +11,12 @@ All notable changes to Sleipnir are documented here. Format follows [Keep a Chan
 - `sleipnir_intent_to_submit_seconds` histogram — latency from Kafka intent consumed to exchange submission.
 - `sleipnir_fill_to_publish_seconds` histogram — latency from WS fill received to Kafka publish.
 - Correlation ID (`correlation_id` UUID) generated at intent-consume time; threaded through all log lines that touch the same order lifecycle.
+- **Standalone smoke test** (`scripts/smoke.sh`) — boots the stack in sim mode via `docker-compose.smoke.yml` overlay, verifies intent → fill → mock-portfolio round-trip, checks `/metrics` and `/readyz`. Auto-teardown on exit.
+- **Sim exchange overlay** (`docker-compose.smoke.yml`) — sets `EXCHANGE_BACKEND=sim` for the gateway, enabling end-to-end testing without Binance credentials.
+- Intent `OrderID` validation at the gateway boundary (security audit finding H4).
 
 ### Changed
-- CORS-equivalent: all `orderID` log fields now carry a sibling `correlation_id` field for cross-process tracing.
+- All `orderID` log fields now carry a sibling `correlation_id` field for cross-process tracing.
 
 ---
 
