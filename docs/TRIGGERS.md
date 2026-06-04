@@ -54,11 +54,19 @@ shared in a job application, or a second person needs to install the SDK.
 shipped `GET /api/v1/features/stream` (SSE) in Phase 10 / ADR-0009.
 **Promotes (cascade).**
 - **muninn-py** — ✅ **delivered** as Phase G: `MuninnStreamClient` / `AsyncMuninnStreamClient` (SSE).
-- **huginn** — 🟢 **promoted** to Phase 8 (live feature streaming consumer); not yet implemented.
-- **sleipnir** — 🟢 **promoted** to Phase 9 (live feature streaming consumer); not yet implemented.
+- **huginn** — ✅ **delivered** as Phase 8: `feed.SSESource` consumes `event: feature` frames and
+  maps them onto `model.FeatureEvent` (scalar-bridged so `obi.1m` reaches the OBI strategy); selected
+  by `FEED_SOURCE=stream`, with backoff reconnect, the existing staleness breaker, and
+  `huginn_feature_stream_connected` / `huginn_feature_stream_reconnects_total` metrics.
+- **sleipnir** — ✅ **delivered** as Phase 9: `feed.StreamClient` consumes the SSE feed into a
+  thread-safe `LatestStore` surfaced at `GET /feature/latest` for operator visibility (deliberately
+  *not* on the trading path); enabled by `FEATURE_STREAM_ENABLED=true`, with WS-style backoff
+  reconnect and `sleipnir_feature_stream_connected` / `sleipnir_feature_stream_drops_total` metrics.
 
 Highest-leverage trigger in the catalog: one server feature promoted an item in three downstream
-repos at once. The transport is SSE (not raw WebSocket) — the feed is push-only; see muninn ADR-0009.
+repos at once — and as of 2026-06-04 all three are shipped, so the T3 cascade is **fully consumed**
+(nothing left for `whats-next.sh` to pick up here). The transport is SSE (not raw WebSocket) — the
+feed is push-only; see muninn ADR-0009.
 
 ### T4 · A needed instrument is unavailable on the current venue (or a 2nd-venue testnet key is provisioned)
 **Signal.** A strategy targets a symbol the current venue's testnet doesn't list, **or** Coinbase
