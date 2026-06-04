@@ -222,6 +222,24 @@ To prevent scope drift:
 
 ---
 
+## Phase 9 — Live feature streaming consumer 🟢 _promoted by T3_
+
+**Goal.** Let sleipnir consume muninn's live feature stream (e.g. for feature-aware pre-trade checks or operator visibility), now that the server exposes one.
+
+**Promoted out of Phase F by trigger T3** — muninn shipped `GET /api/v1/features/stream` (muninn Phase 10 / [ADR-0009](https://github.com/lgreene03/muninn/blob/main/docs/adr/0009-streaming-features-sse.md)). Now eligible for scheduled pickup. **Not yet implemented** — scoped here for the next iteration.
+
+**Deliverables (planned).**
+- [ ] An SSE client (`internal/feed` or similar) that connects to muninn's `/api/v1/features/stream`, decodes `FeatureComputedEvent` JSON frames, with reconnect-and-backoff matching the existing Binance WS reconnect discipline.
+- [ ] A concrete first consumer of the stream (the motivating use — e.g. surface a feature value in telemetry, or a feature-derived collar input); the transport lands first, the use second.
+- [ ] A `sleipnir_feature_stream_connected` gauge mirroring `sleipnir_ws_connected`.
+- [ ] Tests against a stub SSE server.
+
+**Exit criteria.** Sleipnir maintains a healthy connection to the muninn feature stream with clean reconnects and a connection gauge. _Not started._
+
+**Reference.** muninn-py's `MuninnStreamClient` (also promoted by T3) is the reference implementation of the wire format.
+
+---
+
 ## Phase F — Deferred (no schedule)
 
 These belong on the roadmap so they stop showing up as "should we do this now?" in PR reviews. They are not on a clock — each is gated by an **observable trigger** (never a date) catalogued in [TRIGGERS.md](TRIGGERS.md). When a trigger trips, the item moves out of Phase F into the next numbered phase, marked 🟢 with the trigger ID.
@@ -231,8 +249,8 @@ These belong on the roadmap so they stop showing up as "should we do this now?" 
 - **gRPC admin API** for huginn to query order status synchronously (today, huginn only learns about state via the fills topic). _Gated by **T6** (a huginn strategy decision needs synchronous order status)._
 - **Postgres backend** as an alternative to SQLite, behind the existing `OrderStore` interface. Only worth doing if multi-instance sleipnir becomes necessary. _Gated by **T7** (single-instance sleipnir becomes a throughput/HA bottleneck)._
 - **Replay mode** — re-emit historical fills from SQLite onto a `executions.fills.replay.v1` topic for huginn backtests. Would tie nicely into muninn's deterministic replay strategy doc. _Gated by **T8** (a huginn backtest fidelity gap is traced to synthetic fills)._
-- **WS consumer for muninn streaming features** when the server adds a streaming endpoint. _Gated by **T3** (muninn ships a streaming features endpoint)._
-- **Mainnet operation.** Explicitly out of scope until a separate security review phase. _Gated by **T9** (the go-live gate: ≥8 weeks clean paper trading + named human sign-off); opens a new **Phase 9 — Mainnet readiness** rather than promoting a single line._
+- ~~**WS consumer for muninn streaming features** when the server adds a streaming endpoint.~~ ✅ **Promoted by T3 → Phase 9 above** (muninn shipped SSE; see ADR-0009).
+- **Mainnet operation.** Explicitly out of scope until a separate security review phase. _Gated by **T9** (the go-live gate: ≥8 weeks clean paper trading + named human sign-off); opens a new **Phase 10 — Mainnet readiness** rather than promoting a single line._
 
 ---
 

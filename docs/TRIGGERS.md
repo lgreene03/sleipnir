@@ -49,15 +49,16 @@ shared in a job application, or a second person needs to install the SDK.
 
 ## Tier 1 — Cross-repo capability triggers
 
-### T3 · muninn ships a streaming features endpoint
-**Signal.** A server-side ADR lands and a WS/SSE features endpoint goes live.
+### T3 · muninn ships a streaming features endpoint — ✅ TRIPPED 2026-06-04
+**Signal.** A server-side ADR lands and a WS/SSE features endpoint goes live. **Tripped:** muninn
+shipped `GET /api/v1/features/stream` (SSE) in Phase 10 / ADR-0009.
 **Promotes (cascade).**
-- **muninn-py** Phase F — WebSocket streaming client.
-- **huginn** Phase F — WS consumer for streaming features (replaces polling).
-- **sleipnir** Phase F — WS consumer for muninn streaming features.
+- **muninn-py** — ✅ **delivered** as Phase G: `MuninnStreamClient` / `AsyncMuninnStreamClient` (SSE).
+- **huginn** — 🟢 **promoted** to Phase 8 (live feature streaming consumer); not yet implemented.
+- **sleipnir** — 🟢 **promoted** to Phase 9 (live feature streaming consumer); not yet implemented.
 
-Highest-leverage trigger in the catalog: one server feature promotes an item in three downstream
-repos at once.
+Highest-leverage trigger in the catalog: one server feature promoted an item in three downstream
+repos at once. The transport is SSE (not raw WebSocket) — the feed is push-only; see muninn ADR-0009.
 
 ### T4 · A needed instrument is unavailable on the current venue (or a 2nd-venue testnet key is provisioned)
 **Signal.** A strategy targets a symbol the current venue's testnet doesn't list, **or** Coinbase
@@ -112,10 +113,14 @@ The hardest trigger to trip. It requires a **measurable precondition** *and* a *
 **Plus:** a named human signs off on risking real money.
 
 **Promotes — opens new numbered phases (real work, not one-line items):**
-- **sleipnir → new "Phase 9 — Mainnet readiness":** per-instrument kill-switches, real-money risk
+- **sleipnir → new "Phase 10 — Mainnet readiness":** per-instrument kill-switches, real-money risk
   limits, security review, `SECURITY_AUDIT.md` mainnet section.
-- **huginn → new "Phase 8 — Live trading":** two-person operational consent, real-money risk limits,
+- **huginn → new "Phase 9 — Live trading":** two-person operational consent, real-money risk limits,
   dedicated incident-response runbook.
+
+  _(These were numbered Phase 9 / Phase 8 respectively until **T3** tripped on 2026-06-04 and opened
+  an earlier streaming-consumer phase in each repo — sleipnir Phase 9, huginn Phase 8 — shifting the
+  go-live phases by one.)_
 - Mainnet operation in both repos flips on **only after** both new phases are complete.
 
 ### T10 · ≥ 2 strategies run live simultaneously and manual capital split is the bottleneck
