@@ -222,19 +222,19 @@ To prevent scope drift:
 
 ---
 
-## Phase 9 — Live feature streaming consumer 🟢 _promoted by T3_
+## Phase 9 — Live feature streaming consumer ✅ _promoted by T3_
 
 **Goal.** Let sleipnir consume muninn's live feature stream (e.g. for feature-aware pre-trade checks or operator visibility), now that the server exposes one.
 
-**Promoted out of Phase F by trigger T3** — muninn shipped `GET /api/v1/features/stream` (muninn Phase 10 / [ADR-0009](https://github.com/lgreene03/muninn/blob/main/docs/adr/0009-streaming-features-sse.md)). Now eligible for scheduled pickup. **Not yet implemented** — scoped here for the next iteration.
+**Promoted out of Phase F by trigger T3** — muninn shipped `GET /api/v1/features/stream` (muninn Phase 10 / [ADR-0009](https://github.com/lgreene03/muninn/blob/main/docs/adr/0009-streaming-features-sse.md)).
 
-**Deliverables (planned).**
-- [ ] An SSE client (`internal/feed` or similar) that connects to muninn's `/api/v1/features/stream`, decodes `FeatureComputedEvent` JSON frames, with reconnect-and-backoff matching the existing Binance WS reconnect discipline.
-- [ ] A concrete first consumer of the stream (the motivating use — e.g. surface a feature value in telemetry, or a feature-derived collar input); the transport lands first, the use second.
-- [ ] A `sleipnir_feature_stream_connected` gauge mirroring `sleipnir_ws_connected`.
-- [ ] Tests against a stub SSE server.
+**Deliverables.**
+- ✅ **SSE client** (`internal/feed/sse.go`). `StreamClient` connects to muninn's `/api/v1/features/stream` (optional `?feature=`), incrementally decodes `event: feature` frames with an SSE line decoder that mirrors muninn-py's `_SseDecoder` (keepalive comments and non-`event`/`data` fields ignored), and unmarshals each `FeatureComputedEvent` into `feed.FeatureEvent`. Reconnect uses the **same discipline as the Binance WS connector**: exponential backoff (500 ms base, ×2, ±10% jitter, capped at 60 s) with the 30 s "stable connection" reset rule. No client read-timeout (keepalives hold the socket; ctx cancels).
+- ✅ **First concrete consumer: `LatestStore`.** A thread-safe "latest value per feature" snapshot, surfaced read-only at **`GET /feature/latest`** for operator visibility into what muninn is currently emitting. Deliberately does **not** feed the trading path — sleipnir does not pick trades (see non-goals); strategy lives in huginn. Enabled by `FEATURE_STREAM_ENABLED=true` (default off — transport is opt-in until proven in paper); `MUNINN_STREAM_URL` / `MUNINN_STREAM_FEATURE` configure the source.
+- ✅ **`sleipnir_feature_stream_connected` gauge** (1 connected / 0 disconnected), mirroring `sleipnir_ws_connected`, plus `sleipnir_feature_stream_drops_total` mirroring `sleipnir_ws_connection_drops_total`.
+- ✅ **Tests against a stub SSE server** (`internal/feed/sse_test.go`): the decoder, an `httptest` stream emitting keepalive + `event: feature` frames, a forced mid-stream reconnect, a 5xx-retry-then-ctx-cancel path, and `LatestStore` overwrite/copy semantics.
 
-**Exit criteria.** Sleipnir maintains a healthy connection to the muninn feature stream with clean reconnects and a connection gauge. _Not started._
+**Exit criteria.** ✅ Sleipnir maintains a healthy connection to the muninn feature stream with clean exponential-backoff reconnects, a connection gauge, and the latest per-feature values visible at `/feature/latest`.
 
 **Reference.** muninn-py's `MuninnStreamClient` (also promoted by T3) is the reference implementation of the wire format.
 

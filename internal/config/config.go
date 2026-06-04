@@ -31,6 +31,15 @@ type Config struct {
 	// Per-side caps enforced on top of MAX_DAILY_ORDERS. Zero means no per-side cap.
 	MaxDailyBuys  int `envconfig:"MAX_DAILY_BUYS" default:"0"`
 	MaxDailySells int `envconfig:"MAX_DAILY_SELLS" default:"0"`
+
+	// Phase 9 — Muninn SSE feature stream (ADR-0009). Disabled by default: the
+	// transport is opt-in until proven in paper. When enabled, sleipnir tails
+	// muninn's /api/v1/features/stream and surfaces the latest value per
+	// feature at /feature/latest (read-only operator visibility; the feed does
+	// not drive trading).
+	FeatureStreamEnabled bool   `envconfig:"FEATURE_STREAM_ENABLED" default:"false"`
+	MuninnStreamURL      string `envconfig:"MUNINN_STREAM_URL" default:"http://localhost:8080"`
+	MuninnStreamFeature  string `envconfig:"MUNINN_STREAM_FEATURE" default:""`
 }
 
 // LoadConfig reads configuration from the environment and validates required fields.

@@ -14,6 +14,7 @@ import (
 
 	"sleipnir/internal/config"
 	"sleipnir/internal/exchange"
+	"sleipnir/internal/feed"
 	"sleipnir/internal/gateway"
 	"sleipnir/internal/kafka"
 	"sleipnir/internal/tracing"
@@ -225,10 +226,25 @@ func main() {
 		logger,
 	).WithDailySideLimits(cfg.MaxDailyBuys, cfg.MaxDailySells)
 
+	// Phase 9: optionally consume Muninn's live SSE feature stream (ADR-0009).
+	// The first concrete consumer is read-only operator visibility — the latest
+	// value per feature, surfaced at /feature/latest. It does not feed the
+	// trading path (sleipnir does not pick trades). Disabled by default.
+	var featureStore *feed.LatestStore
+	if cfg.FeatureStreamEnabled {
+		featureStore = feed.NewLatestStore()
+		streamClient := feed.NewStreamClient(feed.Config{
+			BaseURL: cfg.MuninnStreamURL,
+			Feature: cfg.MuninnStreamFeature,
+		}, featureStore.Record, logger)
+		logger.Info("Muninn SSE feature stream enabled", "url", cfg.MuninnStreamURL, "feature", cfg.MuninnStreamFeature)
+		go streamClient.Run(ctx)
+	}
+
 	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           healthHandler(tracker, gw, halt),
+		Handler:           healthHandler(tracker, gw, halt, featureStore),
 		ReadHeaderTimeout: 10 * time.Second, // mitigates Slowloris (gosec G112)
 	}
 
@@ -282,11 +298,15 @@ func main() {
 //	GET  /healthz      always 200 if the process is up
 //	GET  /readyz       200 once the gateway has consumed ≥ 1 intent; 503 otherwise
 //	GET  /telemetry    active-order count snapshot
-//	POST /admin/halt   flip the in-memory kill switch; body: {"reason":"…"}
-//	POST /admin/resume clear the kill switch
-//	GET  /admin/halt   current halt status JSON
-//	GET  /metrics      Prometheus
-func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gateway.Halt) http.Handler {
+//	POST /admin/halt    flip the in-memory kill switch; body: {"reason":"…"}
+//	POST /admin/resume  clear the kill switch
+//	GET  /admin/halt    current halt status JSON
+//	GET  /feature/latest latest value per feature from the Muninn SSE stream
+//	GET  /metrics       Prometheus
+//
+// featureStore may be nil when FEATURE_STREAM_ENABLED is false; /feature/latest
+// then reports the disabled state.
+func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gateway.Halt, featureStore *feed.LatestStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -335,6 +355,21 @@ func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gat
 		slog.Info("Operator kill switch cleared")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"halted":false}`))
+	})
+	mux.HandleFunc("/feature/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if featureStore == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"enabled":false,"features":{}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"enabled":  true,
+			"features": featureStore.Snapshot(),
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	})
 	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

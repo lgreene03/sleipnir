@@ -97,6 +97,23 @@ var (
 		Name: "sleipnir_ws_connected",
 		Help: "1 if the exchange WebSocket user data stream is currently subscribed, 0 if disconnected or reconnecting.",
 	})
+
+	// FeatureStreamConnected is 1 while the Muninn SSE feature stream
+	// (ADR-0009, Phase 9) is connected, 0 otherwise. Mirrors WSConnected but
+	// for the inbound feature feed rather than the exchange user stream. Stays
+	// 0 when FEATURE_STREAM_ENABLED is false.
+	FeatureStreamConnected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "sleipnir_feature_stream_connected",
+		Help: "1 if the Muninn SSE feature stream is currently connected, 0 if disconnected or reconnecting.",
+	})
+
+	// FeatureStreamDrops counts Muninn SSE feature-stream disconnects, the
+	// feature-feed analogue of WSConnectionDrops. A climbing value means the
+	// stream is flapping (proxy timeout, muninn restart, network).
+	FeatureStreamDrops = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "sleipnir_feature_stream_drops_total",
+		Help: "Total number of Muninn SSE feature-stream connection drops.",
+	})
 )
 
 func init() {
@@ -111,4 +128,6 @@ func init() {
 	prometheus.MustRegister(IntentToSubmitSeconds)
 	prometheus.MustRegister(FillToPublishSeconds)
 	prometheus.MustRegister(WSConnected)
+	prometheus.MustRegister(FeatureStreamConnected)
+	prometheus.MustRegister(FeatureStreamDrops)
 }

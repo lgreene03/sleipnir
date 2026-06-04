@@ -84,6 +84,9 @@ open http://localhost:3005
 | `MAX_DAILY_ORDERS` | `500` | Daily count cap |
 | `PORT` | `8080` | Health + metrics port |
 | `DB_PATH` | `/app/data/sleipnir.db` | SQLite store path |
+| `FEATURE_STREAM_ENABLED` | `false` | Tail Muninn's SSE feature stream (ADR-0009); surfaces latest values at `/feature/latest` (read-only, does not drive trading) |
+| `MUNINN_STREAM_URL` | `http://localhost:8080` | Muninn base URL for the SSE feature stream |
+| `MUNINN_STREAM_FEATURE` | _(empty)_ | Restrict the stream to one feature name (`?feature=`); empty streams all |
 
 > The hardcoded BTC/ETH per-instrument caps are a known limitation. Any non-BTC/ETH instrument falls through with no size cap — see [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) finding **C3**. Phase 5/6 replaces this with a config-driven `risk.yaml`.
 
