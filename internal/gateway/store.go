@@ -87,13 +87,13 @@ func runMigrations(db *sql.DB) error {
 			}
 
 			if _, err := tx.Exec(m.query); err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return fmt.Errorf("failed to execute migration v%d: %w", m.version, err)
 			}
 
 			_, err = tx.Exec("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", m.version, time.Now())
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return fmt.Errorf("failed to record migration v%d: %w", m.version, err)
 			}
 
@@ -120,7 +120,7 @@ func NewSQLiteOrderStore(dbPath string) (*SQLiteOrderStore, error) {
 
 	// Execute migrations
 	if err := runMigrations(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -185,7 +185,7 @@ func (s *SQLiteOrderStore) GetActiveOrders(ctx context.Context) ([]exchange.Orde
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to query active orders from sqlite: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var orders []exchange.Order
 	states := make(map[string]exchange.OrderState)

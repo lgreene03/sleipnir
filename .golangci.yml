@@ -14,6 +14,7 @@ linters:
   default: none
   enable:
     # Bug-catchers — always on.
+    - errcheck        # unchecked error returns
     - errorlint       # %w vs %v, errors.Is/As correctness
     - gosec           # security findings (HMAC, secrets, weak crypto)
     - govet           # standard vet rules
@@ -29,8 +30,6 @@ linters:
     # - bodyclose: Phase 5 (correctness hardening of internal/exchange).
     #   ~1 finding in binance.go:310 — covered by the audit's reconciliation
     #   rewrite.
-    # - errcheck: Phase 3 (interface promotion + simulator); ~20 unchecked
-    #   Close()/io.ReadAll/strconv.ParseFloat across legacy paths.
     # - contextcheck: Phase 3 (gateway interface refactor); the OrderTracker
     #   methods don't take ctx today and the gateway loop is single-call-site.
     # Re-enable these in the phase that does the rework.
@@ -44,8 +43,8 @@ linters:
       # to a risk.yaml config map.
       checks: ["all", "-QF*"]
     errcheck:
-      check-blank: true
-      check-type-assertions: true
+      check-blank: false
+      check-type-assertions: false
     gosec:
       # Skip a couple of high-noise rules:
       # - G104 (errors not checked) is covered by errcheck

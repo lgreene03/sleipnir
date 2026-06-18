@@ -84,7 +84,7 @@ func main() {
 		logger.Error("Failed to initialize SQLite order store", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Initialize the tracker and preload non-terminal active orders
 	tracker := gateway.NewOrderTracker().WithStore(store)
@@ -327,13 +327,13 @@ func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gat
 		activeOrders := tracker.GetAllActiveOrders()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d,"halted":%t}`, len(activeOrders), halt.IsHalted())
+		_, _ = fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d,"halted":%t}`, len(activeOrders), halt.IsHalted())
 	})
 	mux.HandleFunc("/admin/halt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodGet:
-			fmt.Fprintf(w, `{"halted":%t,"reason":%q}`, halt.IsHalted(), halt.Reason())
+			_, _ = fmt.Fprintf(w, `{"halted":%t,"reason":%q}`, halt.IsHalted(), halt.Reason())
 		case http.MethodPost:
 			var body struct {
 				Reason string `json:"reason"`
@@ -341,7 +341,7 @@ func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gat
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			halt.Set(body.Reason)
 			slog.Warn("Operator kill switch engaged", "reason", halt.Reason())
-			fmt.Fprintf(w, `{"halted":true,"reason":%q}`, halt.Reason())
+			_, _ = fmt.Fprintf(w, `{"halted":true,"reason":%q}`, halt.Reason())
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}

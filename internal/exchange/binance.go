@@ -132,9 +132,13 @@ func (bc *BinanceConnector) SubmitOrder(ctx context.Context, order Order) (Execu
 		finalErr = err
 		return ExecutionFill{}, fmt.Errorf("failed to send order request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		finalErr = fmt.Errorf("failed to read response body: %w", err)
+		return ExecutionFill{}, finalErr
+	}
 	if resp.StatusCode != http.StatusOK {
 		finalErr = fmt.Errorf("exchange returned non-ok status %d", resp.StatusCode)
 		return ExecutionFill{}, fmt.Errorf("exchange returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
@@ -231,9 +235,13 @@ func (bc *BinanceConnector) CancelOrder(ctx context.Context, orderID string, ins
 		finalErr = err
 		return fmt.Errorf("failed to send cancel request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		finalErr = fmt.Errorf("failed to read response body: %w", err)
+		return finalErr
+	}
 	if resp.StatusCode != http.StatusOK {
 		finalErr = fmt.Errorf("cancel returned non-ok status %d", resp.StatusCode)
 		return fmt.Errorf("cancel returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
@@ -272,9 +280,13 @@ func (bc *BinanceConnector) GetOrderState(ctx context.Context, orderID string, i
 		finalErr = err
 		return OrderStatusResult{State: StatePending}, fmt.Errorf("failed to send get-order request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		finalErr = fmt.Errorf("failed to read response body: %w", err)
+		return OrderStatusResult{State: StatePending}, finalErr
+	}
 	if resp.StatusCode != http.StatusOK {
 		finalErr = fmt.Errorf("get order state returned non-ok status %d", resp.StatusCode)
 		return OrderStatusResult{State: StatePending}, fmt.Errorf("get order state returned non-ok status %d: %s", resp.StatusCode, string(bodyBytes))
@@ -378,7 +390,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 
 			if err := conn.WriteJSON(subscribeReq); err != nil {
 				bc.logger.Error("Failed to write subscription request", "error", err)
-				conn.Close()
+				_ = conn.Close()
 
 				telemetry.WSConnectionDrops.Inc()
 				telemetry.WSConnected.Set(0)
@@ -414,7 +426,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			for {
 				_, msg, err := conn.ReadMessage()
 				if err != nil {
-					conn.Close()
+					_ = conn.Close()
 
 					telemetry.WSConnectionDrops.Inc()
 					telemetry.WSConnected.Set(0)
@@ -528,7 +540,7 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 							select {
 							case fillChan <- fill:
 							case <-ctx.Done():
-								conn.Close()
+								_ = conn.Close()
 								return
 							}
 						}

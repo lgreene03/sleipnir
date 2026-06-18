@@ -27,17 +27,17 @@ Phased delivery mirrors the discipline of the muninn server roadmap and the muni
 - `TokenBucketLimiter.Wait` re-enters the `for` loop without bounded sleeps — fine, but `RateLimitDelay` is incremented unconditionally even when zero tokens were needed (no real wait).
 - `gateway.checkRiskLimits` only knows about literal strings `"BTC-USD"`/`"ETH-USD"` and their `…USDT` exchange forms. Anything else gets unlimited size.
 - WebSocket subscription uses `userDataStream.subscribe.signature` and never sends a keepalive PING. The Binance WS API will drop idle sockets at the 24h server timeout boundary; the reconnect loop handles it but there's no proactive ping.
-- No deduplication of fills between the immediate REST `SubmitOrder` response (`gateway.go:180–190`) and the WS stream — the gateway publishes both and relies on a never-existing downstream dedup layer. Huginn applies every fill it receives (`OnExecutionFill` in `internal/executor/executor.go:146`) with no idempotency key.
+- ~~No deduplication of fills between the immediate REST `SubmitOrder` response and the WS stream.~~ Fixed in Phase 5 — `ExecutionID` field added; huginn's executor deduplicates via an LRU cache of seen IDs.
 - `Producer.PublishFill` uses `RequiredAcks: RequireAll` (good) but the gateway's Consumer commits offsets **after** producing — except on risk rejection it commits without producing, which is fine. There is no transactional consume-process-produce; a crash between produce and commit will re-deliver the intent and double-submit. Idempotency relies on Binance accepting `newClientOrderId` collision (it does, with `400` — but the gateway then marks the order rejected).
 
-**Missing entirely.**
-- No `README.md`, no `LICENSE`, no `CONTRIBUTING.md`, no `SECURITY.md`, no `docs/`, no `Makefile`, no `.github/workflows/`, no `.golangci.yml`, no `CHANGELOG.md`.
-- No CI of any kind. `go test ./...` has never run in CI.
-- No structured tracing (OpenTelemetry).
-- No request/correlation IDs through the gateway.
-- No paper-trading / simulated exchange connector — every test that wants to exercise the gateway loop end-to-end has to hit Binance testnet.
-- No metrics for: order state distribution (active count gauge), Kafka consumer lag, DB query latency, fill-to-publish latency, intent ingestion → submission latency, WS subscription confirmation success rate.
-- No `/readyz` distinct from `/healthz`. `/healthz` always returns OK regardless of Kafka/DB/WS state.
+**Missing entirely.** _(All items below resolved in Phases 1–8.)_
+- ~~No `README.md`, no `LICENSE`, no `CONTRIBUTING.md`, no `SECURITY.md`, no `docs/`, no `Makefile`, no `.github/workflows/`, no `.golangci.yml`, no `CHANGELOG.md`.~~ All shipped in Phase 1. errcheck enabled in `.golangci.yml`.
+- ~~No CI of any kind. `go test ./...` has never run in CI.~~ Phase 2.
+- ~~No structured tracing (OpenTelemetry).~~ Phase 7 (W3C TraceContext end-to-end).
+- ~~No request/correlation IDs through the gateway.~~ Phase 7 (`correlation_id` UUID).
+- ~~No paper-trading / simulated exchange connector.~~ Phase 3 (`exchange.SimulatedConnector`).
+- ~~No metrics for: order state distribution, fill-to-publish latency, etc.~~ Phase 7.
+- ~~No `/readyz` distinct from `/healthz`.~~ Phase 6.
 - The Grafana dashboard JSON (`telemetry/grafana/provisioning/dashboards/dashboard.json`) is tracked but its content has not been audited here.
 
 **Integration gaps with huginn / muninn.**

@@ -45,7 +45,7 @@ func main() {
 		Balancer:     &kafka.LeastBytes{},
 		WriteTimeout: 10 * time.Second,
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
