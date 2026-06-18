@@ -2,6 +2,7 @@
 
 > *Named after Odin's eight-legged steed, who carries riders across worlds.*
 > Sleipnir carries order intents from [Huginn](https://github.com/lgreene03/huginn) to the exchange, and fills back.
+> Part of the **[Norse Stack](https://github.com/lgreene03/norse-stack)**.
 
 Sleipnir is the **execution layer** of the four-service Norse stack:
 
