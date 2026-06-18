@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Redpanda provides a high-performance, single-binary Kafka-compatible message broker
   redpanda:
