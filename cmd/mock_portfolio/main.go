@@ -62,7 +62,7 @@ func main() {
 		MaxBytes: 10e6,
 		MaxWait:  1 * time.Second,
 	})
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
