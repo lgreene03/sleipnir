@@ -1,5 +1,8 @@
 # Sleipnir — Order Execution Gateway
 
+[![CI](https://github.com/lgreene03/sleipnir/actions/workflows/ci.yml/badge.svg)](https://github.com/lgreene03/sleipnir/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 > *Named after Odin's eight-legged steed, who carries riders across worlds.*
 > Sleipnir carries order intents from [Huginn](https://github.com/lgreene03/huginn) to the exchange, and fills back.
 > Part of the **[Norse Stack](https://github.com/lgreene03/norse-stack)**.
