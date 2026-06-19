@@ -6,6 +6,10 @@ All notable changes to Sleipnir are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+---
+
+## [0.7.0] — 2026-06-19
+
 ### Added
 - `sleipnir_active_orders` Prometheus gauge — current count of non-terminal orders.
 - `sleipnir_intent_to_submit_seconds` histogram — latency from Kafka intent consumed to exchange submission.
@@ -14,6 +18,9 @@ All notable changes to Sleipnir are documented here. Format follows [Keep a Chan
 - **Standalone smoke test** (`scripts/smoke.sh`) — boots the stack in sim mode via `docker-compose.smoke.yml` overlay, verifies intent → fill → mock-portfolio round-trip, checks `/metrics` and `/readyz`. Auto-teardown on exit.
 - **Sim exchange overlay** (`docker-compose.smoke.yml`) — sets `EXCHANGE_BACKEND=sim` for the gateway, enabling end-to-end testing without Binance credentials.
 - Intent `OrderID` validation at the gateway boundary (security audit finding H4).
+- `bodyclose` and `contextcheck` linters enabled in golangci-lint.
+- `context.Context` threaded through OrderTracker methods for proper context propagation.
+- Gateway coverage boost: store persistence, token bucket cancellation, risk DB error paths, duplicate order rejection tests.
 
 ### Changed
 - All `orderID` log fields now carry a sibling `correlation_id` field for cross-process tracing.
