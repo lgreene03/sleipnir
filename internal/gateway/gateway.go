@@ -136,7 +136,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					// treat it as fully filled (legacy behaviour).
 					targetState = exchange.StateFilled
 				}
-				gw.tracker.UpdateOrderStateAndQty(fill.OrderID, targetState, fill.Quantity)
+				gw.tracker.UpdateOrderStateAndQty(ctx, fill.OrderID, targetState, fill.Quantity)
 
 				// Decrement active orders on terminal state transitions.
 				if targetState == exchange.StateFilled || targetState == exchange.StateCanceled ||
@@ -227,7 +227,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				)
 				span.SetAttributes(attribute.String("reject_reason", "operator_halt"))
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, "operator_halt").Inc()
-				gw.tracker.AddOrder(intent, exchange.StateRejected)
+				gw.tracker.AddOrder(ctx, intent, exchange.StateRejected)
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 					gw.logger.Error("Failed to commit offset after halt rejection",
 						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
@@ -290,7 +290,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				)
 				span.SetAttributes(attribute.String("reject_reason", reason))
 				telemetry.RiskRejections.WithLabelValues(intent.Instrument, reason).Inc()
-				gw.tracker.AddOrder(intent, exchange.StateRejected)
+				gw.tracker.AddOrder(ctx, intent, exchange.StateRejected)
 				if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 					gw.logger.Error("Failed to commit offset after risk rejection",
 						"orderID", intent.OrderID, "correlation_id", correlationID, "error", commitErr)
@@ -311,7 +311,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			}
 
 			// Register inside thread-safe tracker
-			gw.tracker.AddOrder(intent, exchange.StatePending)
+			gw.tracker.AddOrder(ctx, intent, exchange.StatePending)
 			telemetry.ActiveOrders.Inc()
 
 			// Send to concrete exchange connector
@@ -323,7 +323,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				gw.logger.Error("Exchange submission failed",
 					"orderID", intent.OrderID, "correlation_id", correlationID, "error", err)
 				span.SetAttributes(attribute.String("reject_reason", "exchange_error"))
-				gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateRejected)
+				gw.tracker.UpdateOrderState(ctx, intent.OrderID, exchange.StateRejected)
 				telemetry.ActiveOrders.Dec()
 
 				// Commit offset even on rejection to prevent poisonous message loops
@@ -337,7 +337,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 
 			gw.logger.Info("Exchange submission accepted",
 				"orderID", intent.OrderID, "correlation_id", correlationID, "state", exchange.StateSubmitted)
-			gw.tracker.UpdateOrderState(intent.OrderID, exchange.StateSubmitted)
+			gw.tracker.UpdateOrderState(ctx, intent.OrderID, exchange.StateSubmitted)
 
 			// Track submitted orders metric
 			telemetry.OrdersSubmitted.WithLabelValues(intent.Instrument, string(intent.Side), string(intent.Type)).Inc()
@@ -354,7 +354,7 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				telemetry.OrdersFilled.WithLabelValues(fill.Instrument, string(fill.Side)).Inc()
 				telemetry.ActiveOrders.Dec()
 
-				gw.tracker.UpdateOrderState(fill.OrderID, exchange.StateFilled)
+				gw.tracker.UpdateOrderState(ctx, fill.OrderID, exchange.StateFilled)
 
 				// Record commission and slippage for the immediately-returned fill.
 				if gw.tracker.store != nil {

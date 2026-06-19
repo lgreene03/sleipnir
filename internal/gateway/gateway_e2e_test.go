@@ -259,7 +259,7 @@ func TestGatewayE2E_DuplicateOrderID(t *testing.T) {
 	t.Cleanup(cancel)
 
 	tracker := NewOrderTracker()
-	tracker.AddOrder(
+	tracker.AddOrder(context.Background(),
 		exchange.Order{OrderID: "preexisting-1", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01},
 		exchange.StateSubmitted,
 	)
@@ -321,16 +321,16 @@ func TestUpdateOrderStatePreservesFilledQty(t *testing.T) {
 	t.Parallel()
 	tracker := NewOrderTracker()
 	order := exchange.Order{OrderID: "regress-1", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 1.0}
-	tracker.AddOrder(order, exchange.StateSubmitted)
+	tracker.AddOrder(context.Background(), order, exchange.StateSubmitted)
 
 	// Partial fill recorded with explicit qty.
-	tracker.UpdateOrderStateAndQty(order.OrderID, exchange.StatePartiallyFilled, 0.4)
+	tracker.UpdateOrderStateAndQty(context.Background(), order.OrderID, exchange.StatePartiallyFilled, 0.4)
 
 	// Now transition to CANCELED via the qty-less UpdateOrderState. The
 	// old behavior would have overwritten filled_qty with 0; the fix
 	// preserves the prior value. Without a store wired, the assertion is
 	// limited to "no panic + state observable".
-	if !tracker.UpdateOrderState(order.OrderID, exchange.StateCanceled) {
+	if !tracker.UpdateOrderState(context.Background(), order.OrderID, exchange.StateCanceled) {
 		t.Fatalf("expected state change to be reported")
 	}
 	if s, _ := tracker.GetOrderState(order.OrderID); s != exchange.StateCanceled {

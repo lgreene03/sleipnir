@@ -194,7 +194,7 @@ func main() {
 			}
 
 			// Synchronize status in tracking memory & persistent DB
-			tracker.UpdateOrderStateAndQty(order.OrderID, res.State, res.ExecutedQty)
+			tracker.UpdateOrderStateAndQty(reconcileCtx, order.OrderID, res.State, res.ExecutedQty)
 		}
 		logger.Info("Active boot-time reconciliation completed successfully.")
 	}
