@@ -344,7 +344,10 @@ func (bc *BinanceConnector) StartUserStream(ctx context.Context, fillChan chan<-
 			bc.logger.Info("Connecting to Binance WS API address", "url", bc.wsURL)
 
 			connectedAt := time.Now()
-			conn, _, err := websocket.DefaultDialer.DialContext(ctx, bc.wsURL, nil)
+			conn, wsResp, err := websocket.DefaultDialer.DialContext(ctx, bc.wsURL, nil)
+			if wsResp != nil && wsResp.Body != nil {
+				_ = wsResp.Body.Close()
+			}
 			if err != nil {
 				telemetry.WSConnectionDrops.Inc()
 				telemetry.WSConnected.Set(0)

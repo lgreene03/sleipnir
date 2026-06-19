@@ -22,7 +22,7 @@ func TestOrderTrackerAddAndUpdate(t *testing.T) {
 	}
 
 	// 1. Test registration
-	tracker.AddOrder(order, exchange.StatePending)
+	tracker.AddOrder(context.Background(), order, exchange.StatePending)
 
 	retrievedOrder, exists := tracker.GetOrder("ord-101")
 	if !exists {
@@ -41,7 +41,7 @@ func TestOrderTrackerAddAndUpdate(t *testing.T) {
 	}
 
 	// 2. Test status mutations
-	changed := tracker.UpdateOrderState("ord-101", exchange.StateSubmitted)
+	changed := tracker.UpdateOrderState(context.Background(), "ord-101", exchange.StateSubmitted)
 	if !changed {
 		t.Error("Expected UpdateOrderState to indicate state change (true), got false")
 	}
@@ -52,7 +52,7 @@ func TestOrderTrackerAddAndUpdate(t *testing.T) {
 	}
 
 	// Re-updating with same state should return false
-	changed = tracker.UpdateOrderState("ord-101", exchange.StateSubmitted)
+	changed = tracker.UpdateOrderState(context.Background(), "ord-101", exchange.StateSubmitted)
 	if changed {
 		t.Error("Expected UpdateOrderState to indicate no change (false), got true")
 	}
@@ -65,9 +65,9 @@ func TestOrderTrackerActiveFilters(t *testing.T) {
 	o2 := exchange.Order{OrderID: "2", Instrument: "ETH-USD"}
 	o3 := exchange.Order{OrderID: "3", Instrument: "SOL-USD"}
 
-	tracker.AddOrder(o1, exchange.StateSubmitted)
-	tracker.AddOrder(o2, exchange.StateFilled)
-	tracker.AddOrder(o3, exchange.StateCanceled)
+	tracker.AddOrder(context.Background(), o1, exchange.StateSubmitted)
+	tracker.AddOrder(context.Background(), o2, exchange.StateFilled)
+	tracker.AddOrder(context.Background(), o3, exchange.StateCanceled)
 
 	actives := tracker.GetAllActiveOrders()
 	if len(actives) != 1 {
@@ -117,8 +117,8 @@ func TestOrderTrackerConcurrency(t *testing.T) {
 			defer wg.Done()
 			orderID := string(rune(idx))
 			order := exchange.Order{OrderID: orderID, Instrument: "BTC-USD"}
-			tracker.AddOrder(order, exchange.StatePending)
-			tracker.UpdateOrderState(orderID, exchange.StateSubmitted)
+			tracker.AddOrder(context.Background(), order, exchange.StatePending)
+			tracker.UpdateOrderState(context.Background(), orderID, exchange.StateSubmitted)
 			_, _ = tracker.GetOrder(orderID)
 			_ = tracker.GetAllActiveOrders()
 		}(i)

@@ -41,14 +41,14 @@ func (ot *OrderTracker) WithStore(store OrderStore) *OrderTracker {
 }
 
 // AddOrder registers a new order and sets its initial state.
-func (ot *OrderTracker) AddOrder(order exchange.Order, state exchange.OrderState) {
+func (ot *OrderTracker) AddOrder(ctx context.Context, order exchange.Order, state exchange.OrderState) {
 	ot.mu.Lock()
 	ot.orders[order.OrderID] = order
 	ot.states[order.OrderID] = state
 	ot.mu.Unlock()
 
 	if ot.store != nil {
-		_ = ot.store.SaveOrder(context.Background(), order, state)
+		_ = ot.store.SaveOrder(ctx, order, state)
 	}
 }
 
@@ -63,7 +63,7 @@ func (ot *OrderTracker) AddOrder(order exchange.Order, state exchange.OrderState
 // Callers that already know the right qty should keep using
 // UpdateOrderStateAndQty (the WS path does); this method is for state-only
 // transitions like REJECTED, CANCELED, EXPIRED.
-func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderState) bool {
+func (ot *OrderTracker) UpdateOrderState(ctx context.Context, orderID string, state exchange.OrderState) bool {
 	ot.mu.Lock()
 	oldState, exists := ot.states[orderID]
 	if !exists || oldState != state {
@@ -77,7 +77,7 @@ func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderSta
 			// Preserve whatever filled_qty the store currently records — we
 			// don't have a fresh number to write, so don't blow away the old.
 			if ot.store != nil {
-				if q, ok := ot.lookupFilledQtyLocked(orderID); ok {
+				if q, ok := ot.lookupFilledQtyLocked(ctx, orderID); ok {
 					filledQty = q
 				}
 			}
@@ -85,7 +85,7 @@ func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderSta
 		ot.mu.Unlock()
 
 		if ot.store != nil {
-			_ = ot.store.UpdateOrderState(context.Background(), orderID, state, filledQty)
+			_ = ot.store.UpdateOrderState(ctx, orderID, state, filledQty)
 		}
 		return true
 	}
@@ -95,7 +95,7 @@ func (ot *OrderTracker) UpdateOrderState(orderID string, state exchange.OrderSta
 
 // lookupFilledQtyLocked reads the order's current filled_qty from the store
 // without trying to refresh anything in memory. Called with ot.mu held.
-func (ot *OrderTracker) lookupFilledQtyLocked(orderID string) (float64, bool) {
+func (ot *OrderTracker) lookupFilledQtyLocked(ctx context.Context, orderID string) (float64, bool) {
 	// Avoid a round-trip on every state-only transition: GetActiveOrders is
 	// O(active set), and the boot path already populated us. Walk the locally
 	// cached snapshot first.
@@ -106,7 +106,7 @@ func (ot *OrderTracker) lookupFilledQtyLocked(orderID string) (float64, bool) {
 	// We can't easily cache filled_qty per-order without changing the tracker
 	// shape, so the safe fallback is to issue one query. With single-digit
 	// active orders this is a cheap (< 1 ms) SQLite call.
-	_, _, qmap, err := ot.store.GetActiveOrders(context.Background())
+	_, _, qmap, err := ot.store.GetActiveOrders(ctx)
 	if err != nil {
 		return 0, false
 	}
@@ -115,14 +115,14 @@ func (ot *OrderTracker) lookupFilledQtyLocked(orderID string) (float64, bool) {
 }
 
 // UpdateOrderStateAndQty updates both the state and filled quantity.
-func (ot *OrderTracker) UpdateOrderStateAndQty(orderID string, state exchange.OrderState, filledQty float64) bool {
+func (ot *OrderTracker) UpdateOrderStateAndQty(ctx context.Context, orderID string, state exchange.OrderState, filledQty float64) bool {
 	ot.mu.Lock()
 	oldState, exists := ot.states[orderID]
 	ot.states[orderID] = state
 	ot.mu.Unlock()
 
 	if ot.store != nil {
-		_ = ot.store.UpdateOrderState(context.Background(), orderID, state, filledQty)
+		_ = ot.store.UpdateOrderState(ctx, orderID, state, filledQty)
 	}
 	return !exists || oldState != state
 }

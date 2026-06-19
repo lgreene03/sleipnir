@@ -26,13 +26,8 @@ linters:
     - unused          # unused symbols
     - whitespace      # leading/trailing blank lines in func bodies
 
-    # Disabled pending dedicated cleanup phases of docs/ROADMAP.md:
-    # - bodyclose: Phase 5 (correctness hardening of internal/exchange).
-    #   ~1 finding in binance.go:310 — covered by the audit's reconciliation
-    #   rewrite.
-    # - contextcheck: Phase 3 (gateway interface refactor); the OrderTracker
-    #   methods don't take ctx today and the gateway loop is single-call-site.
-    # Re-enable these in the phase that does the rework.
+    - bodyclose       # unclosed HTTP response bodies
+    - contextcheck    # context propagation correctness
 
   settings:
     staticcheck:
