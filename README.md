@@ -83,6 +83,7 @@ open http://localhost:3005
 | `BINANCE_REST_URL` | `https://testnet.binance.vision` | Testnet REST host |
 | `BINANCE_WS_URL` | `wss://ws-api.testnet.binance.vision/ws-api/v3` | Testnet WS host |
 | `RATE_LIMIT_RPS` | `10.0` | Token-bucket request budget |
+| `SUBMIT_TIMEOUT` | `6m` | Deadline on a single exchange submission (incl. a full TWAP/VWAP schedule) so a slow venue can't block the serial intent loop; `0` disables |
 | `MAX_ORDER_QTY_BTC` | `0.1` | Per-order size cap for BTC |
 | `MAX_ORDER_QTY_ETH` | `2.0` | Per-order size cap for ETH |
 | `MAX_DAILY_ORDERS` | `500` | Daily count cap |

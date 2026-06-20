@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -24,6 +25,13 @@ type Config struct {
 
 	RateLimitRPS float64 `envconfig:"RATE_LIMIT_RPS" default:"10.0"`
 	Port         string  `envconfig:"PORT" default:"8080"`
+
+	// SubmitTimeout bounds a single exchange submission (including a full
+	// TWAP/VWAP schedule). Without it, a slow exchange call or a multi-minute
+	// algo blocks every subsequent instrument on the serial intent loop. Set
+	// generously above the longest expected ALGO_DURATION. Default 6m gives a
+	// 5m TWAP headroom; "0" disables the bound.
+	SubmitTimeout time.Duration `envconfig:"SUBMIT_TIMEOUT" default:"6m"`
 
 	MaxOrderQtyBTC float64 `envconfig:"MAX_ORDER_QTY_BTC" default:"0.1"`
 	MaxOrderQtyETH float64 `envconfig:"MAX_ORDER_QTY_ETH" default:"2.0"`

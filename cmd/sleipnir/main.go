@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,7 +226,8 @@ func main() {
 		halt,
 		cfg.MaxDailyOrders,
 		logger,
-	).WithDailySideLimits(cfg.MaxDailyBuys, cfg.MaxDailySells)
+	).WithDailySideLimits(cfg.MaxDailyBuys, cfg.MaxDailySells).
+		WithSubmitTimeout(cfg.SubmitTimeout)
 
 	if cfg.AlgoType != "" {
 		algoDur, parseErr := time.ParseDuration(cfg.AlgoDuration)
@@ -261,7 +263,7 @@ func main() {
 	// 6. Spin up a production-grade health check probe HTTP server (with Prometheus /metrics)
 	healthServer := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           healthHandler(tracker, gw, halt, featureStore),
+		Handler:           healthHandler(tracker, gw, halt, featureStore, os.Getenv("SLEIPNIR_ADMIN_TOKEN"), logger),
 		ReadHeaderTimeout: 10 * time.Second, // mitigates Slowloris (gosec G112)
 	}
 
@@ -321,10 +323,41 @@ func main() {
 //	GET  /feature/latest latest value per feature from the Muninn SSE stream
 //	GET  /metrics       Prometheus
 //
+// The mutating admin endpoints (POST /admin/halt, POST /admin/resume) are
+// gated by a bearer token read from SLEIPNIR_ADMIN_TOKEN. They fail CLOSED:
+// when the env var is empty the mutations are rejected with 503 so an
+// unconfigured deployment cannot expose an unauthenticated kill switch. The
+// read-only GET /admin/halt status, /healthz, /readyz, /metrics, /telemetry,
+// /version and /feature/latest stay open.
+//
 // featureStore may be nil when FEATURE_STREAM_ENABLED is false; /feature/latest
 // then reports the disabled state.
-func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gateway.Halt, featureStore *feed.LatestStore) http.Handler {
+func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gateway.Halt, featureStore *feed.LatestStore, adminToken string, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
+
+	// adminAuth gates a mutating admin handler behind the bearer token. It fails
+	// CLOSED: an empty SLEIPNIR_ADMIN_TOKEN rejects the mutation with 503 rather
+	// than leaving the kill switch open to the network. Constant-time compare
+	// avoids leaking the token via response timing.
+	adminAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if adminToken == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"admin endpoints disabled: SLEIPNIR_ADMIN_TOKEN not set"}`))
+				return
+			}
+			const prefix = "Bearer "
+			authz := r.Header.Get("Authorization")
+			if len(authz) <= len(prefix) || subtle.ConstantTimeCompare([]byte(authz[len(prefix):]), []byte(adminToken)) != 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+				return
+			}
+			next(w, r)
+		}
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -346,33 +379,40 @@ func healthHandler(tracker *gateway.OrderTracker, gw *gateway.Gateway, halt *gat
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, `{"status":"HEALTHY","active_tracked_orders":%d,"halted":%t}`, len(activeOrders), halt.IsHalted())
 	})
-	mux.HandleFunc("/admin/halt", func(w http.ResponseWriter, r *http.Request) {
+	// haltPost mutates the kill switch and is gated by adminAuth below.
+	haltPost := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		halt.Set(body.Reason)
+		logger.Warn("Operator kill switch engaged", "reason", halt.Reason())
+		_, _ = fmt.Fprintf(w, `{"halted":true,"reason":%q}`, halt.Reason())
+	}
+	gatedHaltPost := adminAuth(haltPost)
+	mux.HandleFunc("/admin/halt", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			// Read-only status stays open.
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{"halted":%t,"reason":%q}`, halt.IsHalted(), halt.Reason())
 		case http.MethodPost:
-			var body struct {
-				Reason string `json:"reason"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			halt.Set(body.Reason)
-			slog.Warn("Operator kill switch engaged", "reason", halt.Reason())
-			_, _ = fmt.Fprintf(w, `{"halted":true,"reason":%q}`, halt.Reason())
+			gatedHaltPost(w, r)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
-	mux.HandleFunc("/admin/resume", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/admin/resume", adminAuth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		halt.Clear()
-		slog.Info("Operator kill switch cleared")
+		logger.Info("Operator kill switch cleared")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"halted":false}`))
-	})
+	}))
 	mux.HandleFunc("/feature/latest", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if featureStore == nil {

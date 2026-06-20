@@ -36,8 +36,16 @@ services:
       - BINANCE_REST_URL=https://testnet.binance.vision
       - BINANCE_WS_URL=wss://ws-api.testnet.binance.vision/ws-api/v3
       - RATE_LIMIT_RPS=10.0
+      # Bounds a single exchange submission (incl. a full TWAP/VWAP schedule)
+      # so a slow venue call cannot block the serial intent loop. Keep above
+      # the longest expected ALGO_DURATION; "0" disables the bound.
+      - SUBMIT_TIMEOUT=6m
       - PORT=8080
       - DB_PATH=/app/data/sleipnir.db
+      # Bearer token gating the mutating /admin/halt and /admin/resume
+      # endpoints. They fail closed when unset, so a value must be present for
+      # the operator kill switch to work. Override via .env in real use.
+      - SLEIPNIR_ADMIN_TOKEN=${SLEIPNIR_ADMIN_TOKEN:-localdev-change-me}
     volumes:
       - sleipnir-data:/app/data
     restart: on-failure

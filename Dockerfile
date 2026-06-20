@@ -33,12 +33,24 @@ FROM alpine:3.24@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb2
 # Install SSL certificates and timezone databases
 RUN apk --no-cache add ca-certificates tzdata
 
+# Create a non-root user to run the service (defense in depth: a compromised
+# process does not run as root inside the container).
+RUN addgroup -S sleipnir && adduser -S -G sleipnir -u 10001 sleipnir
+
 WORKDIR /app
 
 # Copy executables from compiler environment
 COPY --from=builder /app/sleipnir .
 COPY --from=builder /app/mock_huginn .
 COPY --from=builder /app/mock_portfolio .
+
+# The SQLite store is written under /app/data (DB_PATH default
+# /app/data/sleipnir.db, volume-mounted in compose). Pre-create it and hand
+# ownership to the non-root user so the store is writable without root.
+RUN mkdir -p /app/data && chown -R sleipnir:sleipnir /app
+
+# Drop privileges for all subsequent runtime.
+USER sleipnir
 
 # Expose HTTP health server port
 EXPOSE 8080

@@ -13,6 +13,9 @@
 set -euo pipefail
 
 SLEIPNIR_URL="${SLEIPNIR_URL:-http://localhost:8085}"
+# Must match SLEIPNIR_ADMIN_TOKEN in docker-compose.smoke.yml so the
+# authenticated admin path can be exercised below.
+SLEIPNIR_ADMIN_TOKEN="${SLEIPNIR_ADMIN_TOKEN:-smoke-admin-token}"
 TIMEOUT=60
 
 RED='\033[0;31m'
@@ -164,7 +167,32 @@ else
   fail "/readyz did not return 200 (last: HTTP ${READYZ_CODE})"
 fi
 
-# --- Step 9: Summary ---
+# --- Step 9: Admin auth on /admin/halt (fail-closed + bearer token) ---
+info "Step 9: Checking /admin/halt bearer-token auth..."
+
+# 9a: no token -> 401 (token is configured in compose, so unauthenticated is rejected)
+NOAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  -d '{"reason":"smoke-noauth"}' "${SLEIPNIR_URL}/admin/halt" 2>/dev/null || echo "000")
+if [ "$NOAUTH_CODE" = "401" ]; then
+  pass "/admin/halt rejects unauthenticated POST (HTTP 401)"
+else
+  fail "/admin/halt POST without token returned HTTP ${NOAUTH_CODE} (expected 401)"
+fi
+
+# 9b: correct token -> 200 and halted:true
+AUTH_BODY=$(curl -s -X POST -H "Authorization: Bearer ${SLEIPNIR_ADMIN_TOKEN}" \
+  -d '{"reason":"smoke-auth"}' "${SLEIPNIR_URL}/admin/halt" 2>/dev/null || echo "")
+if echo "$AUTH_BODY" | grep -q '"halted":true'; then
+  pass "/admin/halt accepts valid bearer token and engages kill switch"
+else
+  fail "/admin/halt with valid token did not engage kill switch (body: ${AUTH_BODY})"
+fi
+
+# 9c: resume with token so the run leaves the gateway un-halted
+curl -s -X POST -H "Authorization: Bearer ${SLEIPNIR_ADMIN_TOKEN}" \
+  "${SLEIPNIR_URL}/admin/resume" >/dev/null 2>&1 || true
+
+# --- Step 10: Summary ---
 echo ""
 TOTAL=$((PASSED + FAILED))
 echo -e "${YELLOW}========================================${NC}"

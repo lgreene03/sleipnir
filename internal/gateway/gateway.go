@@ -41,6 +41,18 @@ type Gateway struct {
 	maxDailyBuys   int         // 0 = no per-side cap
 	maxDailySells  int         // 0 = no per-side cap
 	ready          atomic.Bool // flipped true once we've consumed our first message
+
+	// submitTimeout bounds a single exchange submission (sre-resilience-9). The
+	// intent loop is serial, so an unbounded slow exchange call or multi-minute
+	// TWAP would block every following instrument. Zero disables the bound.
+	submitTimeout time.Duration
+
+	// publishRetries bounds the in-loop retry of an immediate fill publish
+	// before the offset is committed (sre-resilience-10). After exhausting
+	// these, the offset is NOT committed so the message is redelivered rather
+	// than silently desyncing huginn's portfolio.
+	publishRetries  int
+	publishBackoff  time.Duration
 }
 
 // NewGateway creates a new core Gateway.
@@ -72,7 +84,71 @@ func NewGateway(
 		logger:         logger.With("module", "gateway"),
 		fillChan:       make(chan exchange.ExecutionFill, 1000),
 		maxDailyOrders: maxDailyOrders,
+		// Conservative defaults; main.go overrides via WithSubmitTimeout.
+		// submitTimeout 0 = no bound (legacy behaviour preserved for callers
+		// that don't opt in). publishRetries 3 with 100ms→ exponential backoff
+		// gives a transient broker blip a few chances before we refuse to
+		// commit the offset (sre-resilience-10).
+		submitTimeout:  0,
+		publishRetries: 3,
+		publishBackoff: 100 * time.Millisecond,
 	}
+}
+
+// WithSubmitTimeout bounds every exchange submission with a deadline
+// (sre-resilience-9). Zero disables the bound (legacy behaviour). Loaded from
+// SUBMIT_TIMEOUT in main.go.
+func (gw *Gateway) WithSubmitTimeout(d time.Duration) *Gateway {
+	gw.submitTimeout = d
+	return gw
+}
+
+// WithPublishRetry configures the bounded retry applied to a fill publish
+// before the consumer offset is committed (sre-resilience-10). retries < 0 is
+// clamped to 0 (a single attempt). A non-positive backoff disables sleeping
+// between attempts.
+func (gw *Gateway) WithPublishRetry(retries int, backoff time.Duration) *Gateway {
+	if retries < 0 {
+		retries = 0
+	}
+	gw.publishRetries = retries
+	gw.publishBackoff = backoff
+	return gw
+}
+
+// publishFillWithRetry publishes a fill, retrying on transient errors with
+// bounded exponential backoff. It returns nil only when the broker has
+// confirmed the publish. Callers MUST NOT commit the consumer offset until
+// this returns nil — committing first would let a transient broker error
+// permanently desync huginn's portfolio (sre-resilience-10).
+//
+// The retry loop respects ctx cancellation so shutdown is not delayed by a
+// hard-down broker.
+func (gw *Gateway) publishFillWithRetry(ctx context.Context, fill exchange.ExecutionFill) error {
+	backoff := gw.publishBackoff
+	var lastErr error
+	for attempt := 0; attempt <= gw.publishRetries; attempt++ {
+		if attempt > 0 {
+			if backoff > 0 {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("publish retry aborted: %w", ctx.Err())
+				case <-time.After(backoff):
+				}
+				backoff *= 2
+			} else if ctx.Err() != nil {
+				return fmt.Errorf("publish retry aborted: %w", ctx.Err())
+			}
+		}
+		lastErr = gw.producer.PublishFill(ctx, fill)
+		if lastErr == nil {
+			return nil
+		}
+		gw.logger.Warn("Fill publish attempt failed",
+			"orderID", fill.OrderID, "attempt", attempt+1,
+			"max_attempts", gw.publishRetries+1, "error", lastErr)
+	}
+	return fmt.Errorf("publish failed after %d attempts: %w", gw.publishRetries+1, lastErr)
 }
 
 // Halt returns the Halt switch the operator HTTP endpoints flip.
@@ -102,12 +178,32 @@ func (gw *Gateway) WithDailySideLimits(maxBuys, maxSells int) *Gateway {
 func (gw *Gateway) Start(ctx context.Context) error {
 	gw.logger.Info("Starting Sleipnir Gateway coordination loops...")
 
+	// Derive a cancelable context so that if one worker exits abnormally we can
+	// wind the other down and let Start return promptly (sre-resilience-15)
+	// rather than blocking in wg.Wait until the operator cancels.
+	ctx, cancelLoops := context.WithCancel(ctx)
+	defer cancelLoops()
+
 	// 1. Start the live WebSockets user data stream
 	if err := gw.connector.StartUserStream(ctx, gw.fillChan); err != nil {
 		return fmt.Errorf("failed to start exchange websocket user stream: %w", err)
 	}
 
 	var wg sync.WaitGroup
+
+	// sre-resilience-15: capture the first abnormal consumer-loop exit so Start
+	// returns a non-nil error (instead of nil after wg.Wait) and main can act —
+	// e.g. exit non-zero and let the orchestrator restart us. A clean shutdown
+	// (ctx canceled) leaves this nil. Guarded by once so the first cause wins
+	// and concurrent writes are safe.
+	var (
+		exitOnce sync.Once
+		exitErr  error
+	)
+	recordAbnormalExit := func(err error) {
+		exitOnce.Do(func() { exitErr = err })
+		cancelLoops() // wind down the sibling worker so wg.Wait returns
+	}
 
 	// 2. Start WebSocket Fills handler loop
 	wg.Add(1)
@@ -121,6 +217,13 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				return
 			case fill, ok := <-gw.fillChan:
 				if !ok {
+					// The exchange closed the fills channel while we were NOT
+					// asked to shut down — the user-data stream died. This is
+					// abnormal: surface it so Start returns non-nil.
+					if ctx.Err() == nil {
+						gw.logger.Error("Fills channel closed unexpectedly while running; user-data stream terminated")
+						recordAbnormalExit(errors.New("fills worker exited: user-data stream closed unexpectedly"))
+					}
 					return
 				}
 				fillReceivedAt := time.Now()
@@ -168,9 +271,13 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					}
 				}
 
-				// Broadcast fill back to the downstream tracking layer (Kafka)
-				if err := gw.producer.PublishFill(ctx, fill); err != nil {
-					gw.logger.Error("Failed to broadcast execution fill downstream", "orderID", fill.OrderID, "error", err)
+				// Broadcast fill back to the downstream tracking layer (Kafka).
+				// Bounded retry (sre-resilience-10): a WS fill carries no Kafka
+				// offset to redeliver it, so a swallowed publish error here
+				// permanently desyncs huginn's portfolio. Retry transient broker
+				// errors before giving up and logging loudly.
+				if err := gw.publishFillWithRetry(ctx, fill); err != nil {
+					gw.logger.Error("Failed to broadcast execution fill downstream after retries", "orderID", fill.OrderID, "error", err)
 				}
 				telemetry.FillToPublishSeconds.Observe(time.Since(fillReceivedAt).Seconds())
 			}
@@ -326,7 +433,18 @@ func (gw *Gateway) Start(ctx context.Context) error {
 
 			// Send to exchange — through algo executor (TWAP/VWAP) if configured,
 			// otherwise direct single-shot submission.
+			//
+			// sre-resilience-9: the intent loop is serial, so bound each
+			// submission with a deadline. Without it a slow exchange call or a
+			// multi-minute TWAP blocks every following instrument. A worker
+			// pool would parallelise this but is out of scope; the timeout is
+			// the correctness floor. submitTimeout 0 keeps the legacy unbounded
+			// behaviour.
 			submitCtx, submitSpan := tracing.StartSpan(intentCtx, "exchange.submit_order")
+			var submitCancel context.CancelFunc
+			if gw.submitTimeout > 0 {
+				submitCtx, submitCancel = context.WithTimeout(submitCtx, gw.submitTimeout)
+			}
 			var fill exchange.ExecutionFill
 			if gw.algoExec != nil && gw.algoCfg != nil {
 				result, algoErr := gw.algoExec.Execute(submitCtx, intent, *gw.algoCfg)
@@ -339,6 +457,9 @@ func (gw *Gateway) Start(ctx context.Context) error {
 				}
 			} else {
 				fill, err = gw.connector.SubmitOrder(submitCtx, intent)
+			}
+			if submitCancel != nil {
+				submitCancel()
 			}
 			submitSpan.End()
 			telemetry.IntentToSubmitSeconds.Observe(time.Since(intentIngestedAt).Seconds())
@@ -388,17 +509,28 @@ func (gw *Gateway) Start(ctx context.Context) error {
 					}
 				}
 
-				publishCtx, publishSpan := tracing.StartSpan(intentCtx, "gateway.publish_fill",
+				// sre-resilience-10: confirm the fill is on the broker BEFORE we
+				// commit the intent offset. Use the loop's parent ctx (not the
+				// per-submit deadline ctx, which may already be cancelled) so the
+				// retry has its own lifetime. If the publish ultimately fails we
+				// skip the commit so the intent is redelivered rather than
+				// silently dropping the fill and desyncing huginn's portfolio.
+				publishCtx, publishSpan := tracing.StartSpan(ctx, "gateway.publish_fill",
 					attribute.String("execution_id", fill.ExecutionID),
 				)
-				if prodErr := gw.producer.PublishFill(publishCtx, fill); prodErr != nil {
-					gw.logger.Error("Failed to broadcast immediate execution fill",
-						"orderID", fill.OrderID, "correlation_id", correlationID, "error", prodErr)
-				}
+				prodErr := gw.publishFillWithRetry(publishCtx, fill)
 				publishSpan.End()
+				if prodErr != nil {
+					gw.logger.Error("Failed to broadcast immediate execution fill after retries; NOT committing offset so the intent is redelivered",
+						"orderID", fill.OrderID, "correlation_id", correlationID, "error", prodErr)
+					span.SetAttributes(attribute.String("publish_error", prodErr.Error()))
+					span.End()
+					continue
+				}
 			}
 
-			// Commit Kafka offset now that submission is complete and recorded
+			// Commit Kafka offset now that submission is complete, recorded, and
+			// any immediate fill has been confirmed on the broker (sre-resilience-10).
 			if commitErr := gw.consumer.Commit(ctx, msg); commitErr != nil {
 				gw.logger.Error("Failed to commit consumer offset", "orderID", intent.OrderID, "error", commitErr)
 			}
@@ -407,6 +539,12 @@ func (gw *Gateway) Start(ctx context.Context) error {
 	}()
 
 	wg.Wait()
+
+	// sre-resilience-15: if a worker exited abnormally (not a clean ctx
+	// cancellation), surface it. A clean operator/SIGTERM shutdown returns nil.
+	if exitErr != nil {
+		return exitErr
+	}
 	return nil
 }
 

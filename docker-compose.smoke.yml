@@ -7,3 +7,6 @@ services:
   sleipnir:
     environment:
       - EXCHANGE_BACKEND=sim
+      # Admin endpoints fail closed without a token; set a known value so the
+      # smoke test can exercise the authenticated /admin/halt path.
+      - SLEIPNIR_ADMIN_TOKEN=${SLEIPNIR_ADMIN_TOKEN:-smoke-admin-token}
