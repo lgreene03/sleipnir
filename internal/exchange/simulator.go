@@ -54,7 +54,12 @@ type SimulatorConfig struct {
 	FillPrice float64
 
 	// TransactionCost in quote-currency units. 0 disables.
+	// Ignored when TransactionCostBps > 0.
 	TransactionCost float64
+
+	// TransactionCostBps is the fee in basis points (e.g. 10 = 0.10%).
+	// When > 0, overrides flat TransactionCost with: price * qty * bps/10000.
+	TransactionCostBps float64
 
 	// Latency is the wall-clock delay sleep applied before SubmitOrder returns.
 	// Zero is "no sleep". Production tests should use small values (≤ 1 ms).
@@ -113,6 +118,11 @@ func (s *SimulatorConnector) SubmitOrder(ctx context.Context, order Order) (Exec
 	emitWS := s.cfg.AlsoEmitOnWS
 	s.mu.Unlock()
 
+	txCost := s.cfg.TransactionCost
+	if s.cfg.TransactionCostBps > 0 {
+		txCost = price * order.Quantity * (s.cfg.TransactionCostBps / 10_000.0)
+	}
+
 	fill := ExecutionFill{
 		OrderID:         order.OrderID,
 		ExecutionID:     executionID,
@@ -121,7 +131,7 @@ func (s *SimulatorConnector) SubmitOrder(ctx context.Context, order Order) (Exec
 		OrderStatus:     StateFilled, // simulator fully fills synchronously
 		Quantity:        order.Quantity,
 		FillPrice:       price,
-		TransactionCost: s.cfg.TransactionCost,
+		TransactionCost: txCost,
 		Timestamp:       s.cfg.Now(),
 	}
 	s.logger.Debug("Simulated REST fill", "orderID", order.OrderID, "qty", order.Quantity, "price", price)

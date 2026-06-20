@@ -32,6 +32,14 @@ type Config struct {
 	MaxDailyBuys  int `envconfig:"MAX_DAILY_BUYS" default:"0"`
 	MaxDailySells int `envconfig:"MAX_DAILY_SELLS" default:"0"`
 
+	SimFillPrice float64 `envconfig:"SIM_FILL_PRICE" default:"50000"`
+	SimTxCostBps float64 `envconfig:"SIM_TX_COST_BPS" default:"0"`
+
+	// Execution algorithm: "" (direct), "TWAP", or "VWAP".
+	AlgoType     string `envconfig:"ALGO_TYPE" default:""`
+	AlgoSlices   int    `envconfig:"ALGO_SLICES" default:"5"`
+	AlgoDuration string `envconfig:"ALGO_DURATION" default:"5m"`
+
 	// Phase 9 — Muninn SSE feature stream (ADR-0009). Disabled by default: the
 	// transport is opt-in until proven in paper. When enabled, sleipnir tails
 	// muninn's /api/v1/features/stream and surfaces the latest value per

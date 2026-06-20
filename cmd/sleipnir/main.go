@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"sleipnir/internal/algo"
 	"sleipnir/internal/config"
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/feed"
@@ -107,9 +108,9 @@ func main() {
 	case "sim":
 		logger.Warn("Using in-memory simulator backend; orders are NOT submitted to a real exchange")
 		connector = exchange.NewSimulatorConnector(exchange.SimulatorConfig{
-			FillPrice:       50_000.0,
-			TransactionCost: 0.0,
-			AlsoEmitOnWS:    false,
+			FillPrice:          cfg.SimFillPrice,
+			TransactionCostBps: cfg.SimTxCostBps,
+			AlsoEmitOnWS:       false,
 		}, logger)
 	default:
 		logger.Error("Unknown EXCHANGE_BACKEND", "backend", backend, "valid", "binance|sim")
@@ -225,6 +226,22 @@ func main() {
 		cfg.MaxDailyOrders,
 		logger,
 	).WithDailySideLimits(cfg.MaxDailyBuys, cfg.MaxDailySells)
+
+	if cfg.AlgoType != "" {
+		algoDur, parseErr := time.ParseDuration(cfg.AlgoDuration)
+		if parseErr != nil {
+			logger.Error("Invalid ALGO_DURATION", "value", cfg.AlgoDuration, "error", parseErr)
+			os.Exit(1)
+		}
+		algoExec := algo.NewExecutor(connector, logger)
+		algoCfg := &algo.Config{
+			Algorithm: algo.Algorithm(cfg.AlgoType),
+			Duration:  algoDur,
+			Slices:    cfg.AlgoSlices,
+		}
+		gw.WithAlgo(algoExec, algoCfg)
+		logger.Info("Algo execution enabled", "type", cfg.AlgoType, "slices", cfg.AlgoSlices, "duration", algoDur)
+	}
 
 	// Phase 9: optionally consume Muninn's live SSE feature stream (ADR-0009).
 	// The first concrete consumer is read-only operator visibility — the latest

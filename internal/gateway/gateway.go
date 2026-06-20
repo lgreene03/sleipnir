@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 
+	"sleipnir/internal/algo"
 	"sleipnir/internal/exchange"
 	"sleipnir/internal/telemetry"
 	"sleipnir/internal/tracing"
@@ -34,6 +35,8 @@ type Gateway struct {
 	logger    *slog.Logger
 	fillChan  chan exchange.ExecutionFill
 
+	algoExec   *algo.Executor
+	algoCfg    *algo.Config
 	maxDailyOrders int
 	maxDailyBuys   int         // 0 = no per-side cap
 	maxDailySells  int         // 0 = no per-side cap
@@ -78,6 +81,13 @@ func (gw *Gateway) Halt() *Halt { return gw.halt }
 // IsReady reports whether the gateway has consumed at least one intent
 // successfully. /readyz uses this.
 func (gw *Gateway) IsReady() bool { return gw.ready.Load() }
+
+// WithAlgo configures TWAP/VWAP execution for all orders routed through this gateway.
+func (gw *Gateway) WithAlgo(exec *algo.Executor, cfg *algo.Config) *Gateway {
+	gw.algoExec = exec
+	gw.algoCfg = cfg
+	return gw
+}
 
 // WithDailySideLimits configures the per-side daily order caps. Zero on either
 // side means no cap for that side (the combined maxDailyOrders still applies).
@@ -314,9 +324,22 @@ func (gw *Gateway) Start(ctx context.Context) error {
 			gw.tracker.AddOrder(ctx, intent, exchange.StatePending)
 			telemetry.ActiveOrders.Inc()
 
-			// Send to concrete exchange connector
+			// Send to exchange — through algo executor (TWAP/VWAP) if configured,
+			// otherwise direct single-shot submission.
 			submitCtx, submitSpan := tracing.StartSpan(intentCtx, "exchange.submit_order")
-			fill, err := gw.connector.SubmitOrder(submitCtx, intent)
+			var fill exchange.ExecutionFill
+			if gw.algoExec != nil && gw.algoCfg != nil {
+				result, algoErr := gw.algoExec.Execute(submitCtx, intent, *gw.algoCfg)
+				if algoErr != nil {
+					err = algoErr
+				} else if len(result.Fills) > 0 {
+					fill = result.Fills[len(result.Fills)-1]
+					fill.Quantity = result.TotalQty
+					fill.FillPrice = result.AvgPrice
+				}
+			} else {
+				fill, err = gw.connector.SubmitOrder(submitCtx, intent)
+			}
 			submitSpan.End()
 			telemetry.IntentToSubmitSeconds.Observe(time.Since(intentIngestedAt).Seconds())
 			if err != nil {
