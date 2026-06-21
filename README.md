@@ -95,6 +95,10 @@ open http://localhost:3005
 
 > The hardcoded BTC/ETH per-instrument caps are a known limitation. Any non-BTC/ETH instrument falls through with no size cap — see [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) finding **C3**. Phase 5/6 replaces this with a config-driven `risk.yaml`.
 
+## HTTP API
+
+The control-plane and observability endpoints (`/healthz`, `/readyz`, `/telemetry`, `/metrics`, `/version`, `/feature/latest`, and the bearer-gated `POST /admin/halt` & `POST /admin/resume`) are specified in **[`api/openapi.yaml`](api/openapi.yaml)** (OpenAPI 3). This is the HTTP control surface only — order intents and fills flow over Kafka, not HTTP.
+
 ## Topic contracts
 
 Frozen wire definitions live in **[`docs/CONTRACTS.md`](docs/CONTRACTS.md)**. The contract is shared with huginn (`huginn/internal/kafka/{producer.go,fills_consumer.go}`); changes are a coordinated cross-repo PR pair.
@@ -118,6 +122,7 @@ CI lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml): Go 1.25 buil
 - **[`docs/ROADMAP.md`](docs/ROADMAP.md)** — phased plan, exit criteria, non-goals
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — single-page service diagram + boot reconciliation path
 - **[`docs/CONTRACTS.md`](docs/CONTRACTS.md)** — Kafka wire contracts, cross-linked to huginn
+- **[`api/openapi.yaml`](api/openapi.yaml)** — OpenAPI 3 spec for the HTTP control + observability endpoints
 - **[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)** — focused security review (May 2026)
 - **[`SECURITY.md`](SECURITY.md)** — how to report a vulnerability, secret-handling rules
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — branching, commit style, review expectations

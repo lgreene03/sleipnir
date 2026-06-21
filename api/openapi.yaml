@@ -1,0 +1,346 @@
+openapi: 3.0.3
+info:
+  title: Sleipnir Order Execution Gateway API
+  description: |
+    HTTP control-plane and observability surface for Sleipnir, the order
+    execution gateway in the Norse stack. This API does **not** carry order
+    intents or fills — those flow over Kafka (`executions.intents.v1` /
+    `executions.fills.v1`). It exposes liveness/readiness probes, runtime
+    telemetry, build provenance, the read-only Muninn feature snapshot, and the
+    operator kill switch.
+
+    The mutating admin endpoints (`POST /admin/halt`, `POST /admin/resume`) are
+    gated by a bearer token read from the `SLEIPNIR_ADMIN_TOKEN` environment
+    variable. They fail **closed**: when the variable is unset, the mutations
+    return `503` so an unconfigured deployment cannot expose an unauthenticated
+    kill switch. All read-only endpoints stay open.
+
+    This file is hand-maintained to mirror the handler contract in
+    `cmd/sleipnir/main.go` (`healthHandler`). It is a static reference document;
+    it is not wired into the running service.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8080
+    description: Default in-process bind (PORT, default 8080)
+  - url: http://localhost:8085
+    description: docker compose host mapping (see docker-compose.yml)
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: observability
+    description: Telemetry, metrics, and build provenance
+  - name: feed
+    description: Read-only Muninn SSE feature snapshot
+  - name: admin
+    description: Operator kill switch (bearer-token gated mutations)
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: Always returns 200 while the process is up.
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Healthz'
+              example:
+                status: OK
+                service: sleipnir
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: |
+        Returns 200 once the gateway has consumed at least one intent;
+        503 until then.
+      security: []
+      responses:
+        '200':
+          description: Gateway is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readyz'
+              example:
+                status: READY
+        '503':
+          description: Gateway has not yet consumed an intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readyz'
+              example:
+                status: NOT_READY
+  /telemetry:
+    get:
+      tags: [observability]
+      summary: Active-order telemetry snapshot
+      description: Active tracked-order count and current halt state.
+      security: []
+      responses:
+        '200':
+          description: Telemetry snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Telemetry'
+              example:
+                status: HEALTHY
+                active_tracked_orders: 0
+                halted: false
+  /metrics:
+    get:
+      tags: [observability]
+      summary: Prometheus metrics
+      description: Prometheus text exposition format (`promhttp` handler).
+      security: []
+      responses:
+        '200':
+          description: Prometheus metrics in text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP go_goroutines Number of goroutines that currently exist.
+                # TYPE go_goroutines gauge
+                go_goroutines 12
+  /version:
+    get:
+      tags: [observability]
+      summary: Build provenance
+      description: |
+        Build-time identity injected via `-ldflags -X` at link time. Defaults
+        are `version="dev"`, `git_sha="unknown"`, `build_time="unknown"` when
+        built without build args.
+      security: []
+      responses:
+        '200':
+          description: Build identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+              example:
+                version: v0.1.0
+                git_sha: a1b2c3d
+                build_time: '2026-06-21T10:00:00Z'
+  /feature/latest:
+    get:
+      tags: [feed]
+      summary: Latest Muninn feature values
+      description: |
+        Latest value per feature from the Muninn SSE stream
+        (`FEATURE_STREAM_ENABLED`). Read-only operator visibility; it does not
+        drive the trading path. When the stream is disabled the endpoint
+        returns 503 with `enabled=false`.
+      security: []
+      responses:
+        '200':
+          description: Feature stream enabled; latest values per feature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureLatest'
+              example:
+                enabled: true
+                features:
+                  btc_momentum_5m: 0.42
+        '503':
+          description: Feature stream disabled (`FEATURE_STREAM_ENABLED=false`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureLatest'
+              example:
+                enabled: false
+                features: {}
+  /admin/halt:
+    get:
+      tags: [admin]
+      summary: Current halt status
+      description: Read-only kill-switch status. Stays open (no token required).
+      security: []
+      responses:
+        '200':
+          description: Current halt state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HaltStatus'
+              example:
+                halted: false
+                reason: ''
+    post:
+      tags: [admin]
+      summary: Engage the operator kill switch
+      description: |
+        Flips the in-memory kill switch on. Requires a bearer token matching
+        `SLEIPNIR_ADMIN_TOKEN`. Fails closed (503) when the token is unset.
+      security:
+        - adminBearer: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HaltRequest'
+            example:
+              reason: manual operator halt
+      responses:
+        '200':
+          description: Kill switch engaged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HaltStatus'
+              example:
+                halted: true
+                reason: manual operator halt
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/AdminDisabled'
+        '405':
+          description: Method not allowed.
+  /admin/resume:
+    post:
+      tags: [admin]
+      summary: Clear the operator kill switch
+      description: |
+        Clears the in-memory kill switch. Requires a bearer token matching
+        `SLEIPNIR_ADMIN_TOKEN`. Fails closed (503) when the token is unset.
+      security:
+        - adminBearer: []
+      responses:
+        '200':
+          description: Kill switch cleared.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HaltCleared'
+              example:
+                halted: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/AdminDisabled'
+        '405':
+          description: Method not allowed.
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      description: |
+        Bearer token compared (constant-time) against the `SLEIPNIR_ADMIN_TOKEN`
+        environment variable. Required only for the mutating admin endpoints.
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unauthorized
+    AdminDisabled:
+      description: Admin endpoints disabled because `SLEIPNIR_ADMIN_TOKEN` is unset.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: 'admin endpoints disabled: SLEIPNIR_ADMIN_TOKEN not set'
+  schemas:
+    Healthz:
+      type: object
+      properties:
+        status:
+          type: string
+          example: OK
+        service:
+          type: string
+          example: sleipnir
+      required: [status, service]
+    Readyz:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [READY, NOT_READY]
+      required: [status]
+    Telemetry:
+      type: object
+      properties:
+        status:
+          type: string
+          example: HEALTHY
+        active_tracked_orders:
+          type: integer
+          format: int64
+          minimum: 0
+        halted:
+          type: boolean
+      required: [status, active_tracked_orders, halted]
+    VersionInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Semantic version tag, or "dev" when built without args.
+          example: v0.1.0
+        git_sha:
+          type: string
+          description: Abbreviated git commit hash, or "unknown".
+          example: a1b2c3d
+        build_time:
+          type: string
+          description: RFC-3339 UTC build timestamp, or "unknown".
+          example: '2026-06-21T10:00:00Z'
+      required: [version, git_sha, build_time]
+    FeatureLatest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        features:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+      required: [enabled, features]
+    HaltStatus:
+      type: object
+      properties:
+        halted:
+          type: boolean
+        reason:
+          type: string
+      required: [halted, reason]
+    HaltCleared:
+      type: object
+      properties:
+        halted:
+          type: boolean
+          enum: [false]
+      required: [halted]
+    HaltRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Free-text reason recorded with the halt.
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
