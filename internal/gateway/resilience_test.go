@@ -19,7 +19,7 @@ import (
 // ultimately accepted plus the total number of attempts, so tests can assert
 // the gateway retried and only committed once the broker confirmed.
 type flakyPublisher struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	failUntil int // number of leading attempts that should fail
 	attempts  int
 	accepted  []exchange.ExecutionFill
