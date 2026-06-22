@@ -212,7 +212,7 @@ To prevent scope drift:
 - ✅ **`release.yml`** — tag push (v*.*.*) triggers multi-arch Docker build (`linux/amd64` + `linux/arm64`), pushes to GHCR, creates a GitHub Release with image pull instructions. Semver tagging starts at `v0.1.0`.
 - ✅ **`.goreleaser.yaml`** for binary archives — builds `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`; attaches tar.gz + checksums to the GitHub Release. `release.yml` runs goreleaser after the Docker push.
 - ✅ **Pin all top-level dependencies to exact versions.** All direct deps use semver tags; `go mod verify` passes clean; `go mod tidy` updated `go.yaml.in/yaml/v2` from indirect→direct.
-- ✅ **Dockerfile base images locked by digest.** `golang:1.26-alpine@sha256:...` and `alpine:3.23@sha256:...` pinned; `VERSION`/`GIT_SHA`/`BUILD_TIME` build-args inject version via `-ldflags`. `internal/version` package exposes them at `/version` endpoint and in the startup log.
+- ✅ **Dockerfile base images locked by digest.** `golang:1.25-alpine@sha256:...` and `alpine:3.24@sha256:...` pinned; `VERSION`/`GIT_SHA`/`BUILD_TIME` build-args inject version via `-ldflags`. `internal/version` package exposes them at `/version` endpoint and in the startup log.
 - ✅ **`docs/RUNBOOK.md`** — WS reconnecting, Kafka lag climbing, SQLite growth, fills not arriving, key metrics table, graceful restart, config reload guidance.
 
 **Exit criteria.** `docker pull ghcr.io/lgreene/sleipnir:v0.1.0` works. A blank machine can reproduce the binary byte-for-byte from a tag.

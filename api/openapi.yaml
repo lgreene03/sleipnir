@@ -18,7 +18,7 @@ info:
     This file is hand-maintained to mirror the handler contract in
     `cmd/sleipnir/main.go` (`healthHandler`). It is a static reference document;
     it is not wired into the running service.
-  version: 0.1.0
+  version: 0.7.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0

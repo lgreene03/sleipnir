@@ -12,3 +12,8 @@ bin/
 
 # Local OS files
 .DS_Store
+
+# Stray Python tooling artifacts (this is a Go repo; these get created if
+# pytest/pytest-benchmark is ever run from this directory by mistake).
+.pytest_cache/
+.benchmarks/
