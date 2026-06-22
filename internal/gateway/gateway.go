@@ -35,8 +35,8 @@ type Gateway struct {
 	logger    *slog.Logger
 	fillChan  chan exchange.ExecutionFill
 
-	algoExec   *algo.Executor
-	algoCfg    *algo.Config
+	algoExec       *algo.Executor
+	algoCfg        *algo.Config
 	maxDailyOrders int
 	maxDailyBuys   int         // 0 = no per-side cap
 	maxDailySells  int         // 0 = no per-side cap
@@ -51,8 +51,8 @@ type Gateway struct {
 	// before the offset is committed (sre-resilience-10). After exhausting
 	// these, the offset is NOT committed so the message is redelivered rather
 	// than silently desyncing huginn's portfolio.
-	publishRetries  int
-	publishBackoff  time.Duration
+	publishRetries int
+	publishBackoff time.Duration
 }
 
 // NewGateway creates a new core Gateway.
