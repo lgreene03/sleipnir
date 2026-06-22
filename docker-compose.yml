@@ -48,6 +48,13 @@ services:
       - SLEIPNIR_ADMIN_TOKEN=${SLEIPNIR_ADMIN_TOKEN:-localdev-change-me}
     volumes:
       - sleipnir-data:/app/data
+    # Conservative privilege hardening (matches the norse-stack pattern): block
+    # privilege escalation and drop all Linux capabilities. No read_only rootfs
+    # — sleipnir writes its SQLite state to /app/data and that would break it.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: on-failure
 
   # Mock Huginn - Strategy Engine (dispatches intents)
@@ -63,6 +70,10 @@ services:
     environment:
       - KAFKA_BROKERS=redpanda:29092
       - KAFKA_INTENTS_TOPIC=executions.intents.v1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: on-failure
 
   # Mock Portfolio Tracker - consumes fills downstream of sleipnir.
@@ -81,6 +92,10 @@ services:
       - KAFKA_BROKERS=redpanda:29092
       - KAFKA_FILLS_TOPIC=executions.fills.v1
       - KAFKA_CONSUMER_GROUP=mock-portfolio-tracker
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: on-failure
 
   # Prometheus Telemetry Collector
