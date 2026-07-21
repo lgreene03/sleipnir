@@ -274,31 +274,45 @@ func main() {
 		}
 	}()
 
-	// 7. Handle signals and coordinate graceful teardown
+	// Drain deadline: how long a SIGTERM waits for in-flight orders to settle
+	// before tearing down. Kept below a typical orchestrator SIGKILL grace
+	// (Docker's default 10s), overridable via SHUTDOWN_DRAIN_TIMEOUT. If the
+	// deadline is raised, raise the compose stop_grace_period to match.
+	drainTimeout := 8 * time.Second
+	if v := os.Getenv("SHUTDOWN_DRAIN_TIMEOUT"); v != "" {
+		if d, perr := time.ParseDuration(v); perr == nil && d > 0 {
+			drainTimeout = d
+		} else {
+			logger.Warn("Ignoring invalid SHUTDOWN_DRAIN_TIMEOUT", "value", v)
+		}
+	}
+
+	// 7. Handle signals and coordinate a graceful DRAIN, then teardown.
 	go func() {
 		sig := <-sigChan
-		logger.Info("System signal captured, triggering shutdown sequence...", "signal", sig.String())
-		cancel() // Propagate cancellation context
+		logger.Info("System signal captured, starting graceful drain...", "signal", sig.String())
 
-		// Shut down health server
+		// Phase 1: stop pulling new intents and wait for in-flight orders to reach
+		// a terminal state so late fills are published before anything is closed.
+		if remaining := gw.Drain(drainTimeout); remaining > 0 {
+			logger.Warn("Proceeding to teardown with orders still in flight", "remaining", remaining)
+		}
+
+		// Phase 2: cancel the root context so the fills worker stops and gw.Start
+		// returns on the main goroutine, which then closes Kafka and runs the
+		// deferred store.Close() + trace flush (no os.Exit, so defers actually run).
+		cancel()
+
+		// Stop advertising readiness / accepting probes.
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		if err := healthServer.Shutdown(shutdownCtx); err != nil {
 			logger.Error("Error during health-check server shutdown", "error", err)
 		}
-
-		// Close Kafka resources safely
-		if err := consumer.Close(); err != nil {
-			logger.Error("Error closing Kafka consumer connection", "error", err)
-		}
-		if err := producer.Close(); err != nil {
-			logger.Error("Error closing Kafka producer connection", "error", err)
-		}
-		logger.Info("Sleipnir resources torn down cleanly. Exiting.")
-		os.Exit(0)
 	}()
 
-	// 8. Run the Gateway Loop
+	// 8. Run the Gateway Loop (blocks until the drain+cancel above, or an
+	// abnormal worker exit, unwinds it).
 	if err := gw.Start(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("Gateway loops terminated via context completion.")
@@ -307,6 +321,17 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// Clean teardown on the graceful (canceled) path: the workers have stopped,
+	// so closing Kafka cannot race a publish. The deferred store.Close() and OTel
+	// flush then run as main returns, which os.Exit(0) previously skipped.
+	if err := consumer.Close(); err != nil {
+		logger.Error("Error closing Kafka consumer connection", "error", err)
+	}
+	if err := producer.Close(); err != nil {
+		logger.Error("Error closing Kafka producer connection", "error", err)
+	}
+	logger.Info("Sleipnir resources torn down cleanly.")
 }
 
 // healthHandler serves liveness probes, /readyz, active trading telemetry,

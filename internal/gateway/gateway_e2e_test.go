@@ -138,6 +138,77 @@ func TestGatewayE2E_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGatewayDrain_WaitsForInFlightThenSettles asserts the graceful-drain barrier:
+// Drain stops new intake and BLOCKS until in-flight orders reach a terminal state
+// (or the deadline), so late fills are published before teardown. This is the
+// behaviour the RUNBOOK promises; before the barrier, shutdown just cancelled the
+// context and hard-exited, dropping any fill in flight.
+func TestGatewayDrain_WaitsForInFlightThenSettles(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// A quiet topic: the intent worker idles on FetchIntent, so nothing new is
+	// consumed and the only in-flight order is the one we seed below.
+	consumer := &fakeConsumer{}
+	publisher := &fakePublisher{}
+	sim := exchange.NewSimulatorConnector(exchange.SimulatorConfig{
+		FillPrice: 50_000.0,
+		Now:       func() time.Time { return time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC) },
+	}, slog.Default())
+	tracker := NewOrderTracker()
+	limiter := NewTokenBucketLimiter(1000)
+	gw := NewGateway(
+		consumer, publisher, sim, tracker, limiter,
+		NewLegacyRiskPolicy(10.0, 100.0), NewHalt(), 100, slog.Default(),
+	)
+
+	done := make(chan struct{})
+	go func() { _ = gw.Start(ctx); close(done) }()
+
+	// Wait for Start to register the intake canceller so Drain is not a no-op.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gw.intakeMu.Lock()
+		ready := gw.cancelIntake != nil
+		gw.intakeMu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Seed an in-flight order that will never receive a fill (resting limit far
+	// from the sim's fill price, added directly to the tracker).
+	tracker.AddOrder(context.Background(),
+		exchange.Order{OrderID: "stuck-1", Instrument: "BTC-USD", Side: exchange.SideBuy, Quantity: 0.01, Type: exchange.TypeLimit, Price: 40_000},
+		exchange.StateSubmitted)
+
+	// Drain must WAIT for the deadline (the order never settles) and report it.
+	start := time.Now()
+	remaining := gw.Drain(250 * time.Millisecond)
+	elapsed := time.Since(start)
+	if remaining != 1 {
+		t.Fatalf("Drain should report 1 order still in flight, got %d", remaining)
+	}
+	if elapsed < 200*time.Millisecond {
+		t.Errorf("Drain returned after %v; it must wait for the deadline while orders are in flight", elapsed)
+	}
+
+	// Once the order reaches a terminal state, a re-drain returns 0 promptly.
+	tracker.UpdateOrderState(context.Background(), "stuck-1", exchange.StateFilled)
+	start = time.Now()
+	if r := gw.Drain(2 * time.Second); r != 0 {
+		t.Fatalf("after the order settled, Drain should report 0, got %d", r)
+	}
+	if waited := time.Since(start); waited > 500*time.Millisecond {
+		t.Errorf("Drain should return promptly once nothing is in flight, waited %v", waited)
+	}
+
+	cancel()
+	<-done
+}
+
 func TestGatewayE2E_RiskRejectionDoesNotEmitFill(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

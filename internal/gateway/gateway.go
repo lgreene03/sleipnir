@@ -53,6 +53,13 @@ type Gateway struct {
 	// than silently desyncing huginn's portfolio.
 	publishRetries int
 	publishBackoff time.Duration
+
+	// Drain coordination. cancelIntake stops the intent-ingestion worker (so no
+	// new intents are pulled) while the fills worker keeps running to settle
+	// orders already in flight. Set by Start; read by Drain from another
+	// goroutine, so guarded by intakeMu.
+	intakeMu     sync.Mutex
+	cancelIntake context.CancelFunc
 }
 
 // NewGateway creates a new core Gateway.
@@ -174,6 +181,41 @@ func (gw *Gateway) WithDailySideLimits(maxBuys, maxSells int) *Gateway {
 	return gw
 }
 
+// Drain performs a graceful drain of the execution path: it stops the gateway
+// from pulling NEW intents, then waits up to timeout for every in-flight order
+// to reach a terminal state, so late fills are published before teardown. The
+// fills worker keeps running throughout, so orders already submitted continue to
+// settle and broadcast. Returns the number of orders still active at the
+// deadline (0 means a fully clean drain); anything left is recovered by the
+// boot-time reconciliation on the next start. Safe to call before Start (no-op).
+func (gw *Gateway) Drain(timeout time.Duration) int {
+	gw.intakeMu.Lock()
+	cancelIntake := gw.cancelIntake
+	gw.intakeMu.Unlock()
+	if cancelIntake == nil {
+		return 0 // Start has not run; nothing is in flight.
+	}
+
+	gw.logger.Info("Draining: stopping new intent intake, waiting for in-flight orders to settle",
+		"timeout", timeout.String())
+	cancelIntake() // stop the intent worker's fetch loop; fills worker stays alive
+
+	deadline := time.Now().Add(timeout)
+	for {
+		active := len(gw.tracker.GetAllActiveOrders())
+		if active == 0 {
+			gw.logger.Info("Drain complete: all in-flight orders settled")
+			return 0
+		}
+		if !time.Now().Before(deadline) {
+			gw.logger.Warn("Drain deadline reached with orders still in flight; boot reconciliation will recover them",
+				"remaining", active)
+			return active
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // Start launches the background loops of the gateway and blocks until the context is canceled.
 func (gw *Gateway) Start(ctx context.Context) error {
 	gw.logger.Info("Starting Sleipnir Gateway coordination loops...")
@@ -183,6 +225,16 @@ func (gw *Gateway) Start(ctx context.Context) error {
 	// rather than blocking in wg.Wait until the operator cancels.
 	ctx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
+
+	// intakeCtx is a child of ctx used ONLY by the intent-ingestion worker's
+	// fetch loop. Drain cancels it to stop pulling new intents while the fills
+	// worker (on ctx) keeps settling orders already in flight. cancelLoops (via
+	// ctx) still tears both down on full shutdown.
+	intakeCtx, cancelIntake := context.WithCancel(ctx)
+	defer cancelIntake()
+	gw.intakeMu.Lock()
+	gw.cancelIntake = cancelIntake
+	gw.intakeMu.Unlock()
 
 	// 1. Start the live WebSockets user data stream
 	if err := gw.connector.StartUserStream(ctx, gw.fillChan); err != nil {
@@ -291,14 +343,15 @@ func (gw *Gateway) Start(ctx context.Context) error {
 		gw.logger.Info("Intents ingestion consumer worker started")
 		for {
 			select {
-			case <-ctx.Done():
-				gw.logger.Info("Intents consumer worker shutting down")
+			case <-intakeCtx.Done():
+				gw.logger.Info("Intents consumer worker shutting down (intake closed)")
 				return
 			default:
 			}
 
-			// Ingest next execution intent from Kafka
-			intent, msg, err := gw.consumer.FetchIntent(ctx)
+			// Ingest next execution intent from Kafka. Bound the fetch to intakeCtx
+			// so Drain can stop new intake while in-flight orders keep settling.
+			intent, msg, err := gw.consumer.FetchIntent(intakeCtx)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return

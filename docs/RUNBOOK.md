@@ -104,11 +104,22 @@ Symptoms: `sleipnir_orders_filled_total` flat; Huginn portfolio stalled.
 ## Graceful restart
 
 ```bash
-# SIGTERM drains in-flight fills before exit
+# SIGTERM triggers a graceful drain before exit
 docker-compose restart sleipnir
 ```
 
-Sleipnir logs `"Shutting down"` and then `"Shutdown complete"` before exiting. On restart, the SQLite store is replayed to rebuild the in-memory order tracker.
+On `SIGTERM`/`SIGINT`, Sleipnir performs a bounded **drain**: it stops pulling new
+intents from Kafka, then waits up to `SHUTDOWN_DRAIN_TIMEOUT` (default `8s`) for
+every in-flight order to reach a terminal state so late fills are published
+before teardown. It logs `"starting graceful drain..."`, then either
+`"Drain complete: all in-flight orders settled"` or, if the deadline is hit,
+`"Drain deadline reached ..."` with the remaining count. Only then does it cancel
+the workers, close Kafka, and close the SQLite store (the teardown now runs its
+deferred cleanup rather than hard-exiting). Anything still in flight at the
+deadline is recovered by the **boot-time reconciliation** on the next start,
+which replays the SQLite store to rebuild the tracker and backfills any missed
+fills. If you raise `SHUTDOWN_DRAIN_TIMEOUT`, raise the compose
+`stop_grace_period` to match, so the orchestrator does not `SIGKILL` mid-drain.
 
 ---
 
