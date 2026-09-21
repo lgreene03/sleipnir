@@ -15,7 +15,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 	go.yaml.in/yaml/v2 v2.4.4
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	modernc.org/sqlite v1.58.0
 )
 
