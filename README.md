@@ -115,7 +115,7 @@ make compose-up     # docker compose up -d
 make compose-down   # docker compose down -v
 ```
 
-CI lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml): Go 1.25 build + vet + `-race` + coverage upload, `golangci-lint`, and a non-pushing Docker build verification. Dependabot is wired in [`.github/dependabot.yml`](.github/dependabot.yml).
+CI lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml): build + vet + `-race` + coverage upload, `golangci-lint`, `govulncheck`, and a non-pushing Docker build verification, all on the Go toolchain `go.mod` declares (currently 1.26.10). Dependabot is wired in [`.github/dependabot.yml`](.github/dependabot.yml).
 
 ## Project documents
 
