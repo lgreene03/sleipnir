@@ -1,8 +1,7 @@
 version: 2
 
-# Keep go modules and GitHub Actions versions fresh. Docker base image
-# updates fire when the Dockerfile is digest-pinned in Phase 8; until then
-# the floating alpine:3.20 tag floats on its own.
+# Keep go modules, GitHub Actions and the digest-pinned Docker base images
+# fresh.
 updates:
   - package-ecosystem: gomod
     directory: "/"
@@ -31,3 +30,11 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 3
+    ignore:
+      # The golang builder image must match go.mod's `go` directive, which CI
+      # treats as the single source of truth for the toolchain, and dependabot's
+      # gomod updates never move that directive. A minor Go release (1.26 to
+      # 1.27) is therefore a deliberate change made to go.mod and the Dockerfile
+      # together, not a routine image bump. Patch releases still arrive here.
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
